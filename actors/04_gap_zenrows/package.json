@@ -1,0 +1,9 @@
+{
+  "name": "04_gap_zenrows",
+  "version": "0.5.0",
+  "type": "module",
+  "dependencies": {
+    "apify": "^3.1.1",
+    "node-fetch": "^3.3.2"
+  }
+}

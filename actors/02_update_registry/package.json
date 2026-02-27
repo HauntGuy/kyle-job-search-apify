@@ -1,0 +1,8 @@
+{
+  "name": "02_update_registry",
+  "version": "0.5.0",
+  "type": "module",
+  "dependencies": {
+    "apify": "^3.1.1"
+  }
+}
