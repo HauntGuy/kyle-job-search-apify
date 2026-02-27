@@ -9,6 +9,7 @@
 
 import { Actor } from 'apify';
 import fetch from 'node-fetch';
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const DEFAULT_THRESHOLD = 0.60;
 const DEFAULT_MODEL = 'gpt-4o-mini'; // override with input.openaiModel
@@ -218,7 +219,7 @@ Actor.main(async () => {
     const score = Number(evalObj.score || 0);
     const disq = evalObj.disqualify === true;
 
-    if (!disq && isFinite(score) && score >= threshold) {
+    if (!disq && evalObj.location_ok === true && isFinite(score) && score >= threshold) {
       const where = r.location || '';
       const ageDays = toDaysAgo(r.published);
       const salary = (evalObj.salary_text || getSalaryHint(r) || '').toString();
@@ -239,7 +240,7 @@ Actor.main(async () => {
       acceptedDebug.push({ record: r, eval: evalObj });
     }
 
-    if (report.scored % 20 === 0) await Actor.sleep(30); // gentle pacing
+    if (report.scored % 20 === 0) await sleep(30); // gentle pacing
   }
 
   report.accepted = accepted.length;

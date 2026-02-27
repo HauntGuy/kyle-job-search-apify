@@ -1,62 +1,61 @@
-// 06_notify_report/main.js — v2.2 (prefixed; defaults to randy@forgaard.com)
+// 06_notify_report/main.js — v2.3.1
+// Sends nightly email via Apify's official actor: apify/send-mail
+// Attaches accepted.csv from KV store job-pipeline.
+
 import { Actor } from 'apify';
-import fetch from 'node-fetch';
 
-const SUBJECT_PREFIX = '[Kyle Job Search Bot] ';
+const SUBJECT_PREFIX_DEFAULT = '[Kyle Job Search Bot] ';
 
-async function sendEmail(sendgridKey, fromEmail, toEmail, subject, text) {
-  const payload = {
-    personalizations: [{ to: [{ email: toEmail }] }],
-    from: { email: fromEmail, name: 'Kyle Job Search Bot' },
-    subject,
-    content: [{ type: 'text/plain', value: text }],
-    reply_to: { email: toEmail }
-  };
-
-  const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sendgridKey}` },
-    body: JSON.stringify(payload)
-  });
-
-  if (res.status >= 300) {
-    const body = await res.text();
-    throw new Error(`SendGrid error ${res.status}: ${body}`);
-  }
+function toBase64Utf8(str) {
+  return Buffer.from(str ?? '', 'utf8').toString('base64');
 }
 
 Actor.main(async () => {
   const kv = await Actor.openKeyValueStore('job-pipeline');
-  const SENDGRID_API_KEY = Actor.getEnv().SENDGRID_API_KEY;
-  const input = await Actor.getInput() || {};
+  const input = (await Actor.getInput()) || {};
 
   const TO_EMAIL = Actor.getEnv().TO_EMAIL || input.toEmail || 'randy@forgaard.com';
-  const FROM_EMAIL = Actor.getEnv().FROM_EMAIL || input.fromEmail || 'randy@forgaard.com';
+  const SUBJECT_PREFIX = Actor.getEnv().SUBJECT_PREFIX || input.subjectPrefix || SUBJECT_PREFIX_DEFAULT;
 
-  if (!SENDGRID_API_KEY) {
-    console.log('Missing SENDGRID_API_KEY; skipping email.');
-    return;
-  }
+  const discover = (await kv.getValue('discover_summary.json')) || {};
+  const registry = (await kv.getValue('registry_summary.json')) || {};
+  const fetchSnap = (await kv.getValue('fetch_snapshot.json')) || {};
+  const runReport = (await kv.getValue('run_report.json')) || {};
 
-  const discover = await kv.getValue('discover_summary.json') || {};
-  const registry = await kv.getValue('registry_summary.json') || {};
-  const fetchSnap = await kv.getValue('fetch_snapshot.json') || {};
-  const runReport = await kv.getValue('run_report.json') || {};
+  const acceptedCsv = (await kv.getValue('accepted.csv')) || '';
+  const acceptedCount = runReport.accepted ?? 0;
 
   const lines = [];
   lines.push('Nightly Job Pipeline Status');
   lines.push('--------------------------------');
-  lines.push(`Discovery: ${discover.discovered ?? 0} discovered (queries=${discover.queries ?? 0}, lookback=${discover.lookbackHours ?? 48}h)`);
-  lines.push(`Registry: total companies ${registry.total ?? 0}, added ${registry.added ?? 0}`);
-  lines.push(`Fetch: normalized records ${fetchSnap.records_normalized ?? 0} (success ${fetchSnap.companies_success ?? 0} / fail ${fetchSnap.companies_failed ?? 0})`);
-  lines.push(`LLM: accepted ${runReport.accepted ?? 0} (prefilter=${runReport.prefilterMode ?? 'none'}, threshold=${runReport.threshold ?? 0.60})`);
-  lines.push('Artifacts in KV store "job-pipeline":');
-  lines.push(' - accepted.csv');
-  lines.push(' - run_report.json');
-  lines.push(' - manifest.log');
-  lines.push(' - fetch_snapshot.json');
 
-  const subject = SUBJECT_PREFIX + `Nightly Job Pipeline: ${runReport.accepted ?? 0} accepted`;
-  await sendEmail(SENDGRID_API_KEY, FROM_EMAIL, TO_EMAIL, subject, lines.join('\n'));
-  console.log('Status email sent.');
+  // These two may be empty if you're using Fantastic mode and skipping 01/02.
+  if (Object.keys(discover).length) {
+    lines.push(`Discovery: ${discover.discovered ?? 0} discovered (queries=${discover.queries ?? 0}, lookback=${discover.lookbackHours ?? 48}h)`);
+  }
+  if (Object.keys(registry).length) {
+    lines.push(`Registry: total companies ${registry.total ?? 0}, added ${registry.added ?? 0}`);
+  }
+
+  lines.push(`Fetch: normalized records ${fetchSnap.records_normalized ?? 0} (success ${fetchSnap.companies_success ?? 0} / fail ${fetchSnap.companies_failed ?? 0})`);
+  lines.push(`LLM: accepted ${acceptedCount} (prefilter=${runReport.prefilterMode ?? 'none'}, threshold=${runReport.threshold ?? 0.60}, model=${runReport.model ?? 'n/a'})`);
+  lines.push('');
+  lines.push('Attached: accepted.csv');
+
+  const subject = `${SUBJECT_PREFIX}Nightly Job Pipeline: ${acceptedCount} accepted`;
+
+  const attachments = [{
+    filename: 'accepted.csv',
+    data: toBase64Utf8(acceptedCsv),
+  }];
+
+  // Requires "Full permissions" in the Task's Run options (so it can call another actor).
+  await Actor.call('apify/send-mail', {
+    to: TO_EMAIL,
+    subject,
+    text: lines.join('\n'),
+    attachments,
+  });
+
+  console.log(`Email sent to ${TO_EMAIL} with accepted.csv attached.`);
 });

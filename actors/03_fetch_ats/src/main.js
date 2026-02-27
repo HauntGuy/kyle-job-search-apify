@@ -10,6 +10,7 @@
 import { Actor } from 'apify';
 import fetch from 'node-fetch';
 import { ApifyClient } from 'apify-client';
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function iso(d) {
   try { return new Date(d).toISOString(); } catch { return null; }
@@ -170,7 +171,7 @@ async function fetchSmartRecruiters(slug, manifest) {
       });
     }
     if (postings.length < 100) break;
-    await Actor.sleep(250);
+    await sleep(250);
   }
   return out;
 }
@@ -267,7 +268,7 @@ async function fetchFantasticJobs(cfg, kv, manifest) {
 Actor.main(async () => {
   const kv = await Actor.openKeyValueStore('job-pipeline');
   const input = await Actor.getInput() || {};
-  const fetchMode = safeLower(input.fetchMode || 'direct_ats'); // direct_ats | fantastic_jobs_api | hybrid
+  const fetchMode = safeLower(input.fetchMode || 'fantastic_jobs_api'); // direct_ats | fantastic_jobs_api | hybrid
 
   const manifest = [];
   const records = [];
@@ -312,7 +313,7 @@ Actor.main(async () => {
         snapshot.companies_failed += 1;
         manifest.push(`ERROR ${r.ats}:${r.slug} ${e?.message || e}`);
       }
-      await Actor.sleep(250);
+      await sleep(250);
     }
   }
 
