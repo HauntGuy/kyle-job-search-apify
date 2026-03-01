@@ -198,7 +198,7 @@ async function fetchWorkdayLight(tenant, manifest) {
 // -------------------- Fantastic.jobs Career Site Job Listing API --------------------
 
 async function fetchFantasticJobs(cfg, kv, manifest) {
-  const token = Actor.getEnv().APIFY_TOKEN;
+  const token = Actor.getEnv().token || process.env.APIFY_TOKEN;
   if (!token) throw new Error('Missing APIFY_TOKEN (required to call Apify Store actors).');
 
   // Auto-widen the time range to catch up if we missed a day.
