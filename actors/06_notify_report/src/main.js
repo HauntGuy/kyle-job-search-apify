@@ -14,22 +14,21 @@ Actor.main(async () => {
   const kv = await Actor.openKeyValueStore('job-pipeline');
   const input = (await Actor.getInput()) || {};
 
-  const TO_EMAIL = Actor.getEnv().TO_EMAIL || input.toEmail || 'randy@forgaard.com';
-  const SUBJECT_PREFIX = Actor.getEnv().SUBJECT_PREFIX || input.subjectPrefix || SUBJECT_PREFIX_DEFAULT;
+  const TO_EMAIL = process.env.TO_EMAIL || input.toEmail || 'randy@forgaard.com';
+  const SUBJECT_PREFIX = process.env.SUBJECT_PREFIX || input.subjectPrefix || SUBJECT_PREFIX_DEFAULT;
 
   const discover = (await kv.getValue('discover_summary.json')) || {};
   const registry = (await kv.getValue('registry_summary.json')) || {};
   const fetchSnap = (await kv.getValue('fetch_snapshot.json')) || {};
   const runReport = (await kv.getValue('run_report.json')) || {};
-
   const acceptedCsv = (await kv.getValue('accepted.csv')) || '';
+
   const acceptedCount = runReport.accepted ?? 0;
 
   const lines = [];
   lines.push('Nightly Job Pipeline Status');
   lines.push('--------------------------------');
 
-  // These two may be empty if you're using Fantastic mode and skipping 01/02.
   if (Object.keys(discover).length) {
     lines.push(`Discovery: ${discover.discovered ?? 0} discovered (queries=${discover.queries ?? 0}, lookback=${discover.lookbackHours ?? 48}h)`);
   }
@@ -49,7 +48,7 @@ Actor.main(async () => {
     data: toBase64Utf8(acceptedCsv),
   }];
 
-  // Requires "Full permissions" in the Task's Run options (so it can call another actor).
+  // Requires Full permissions on this actor.
   await Actor.call('apify/send-mail', {
     to: TO_EMAIL,
     subject,

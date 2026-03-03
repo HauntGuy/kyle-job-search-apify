@@ -1,20 +1,13 @@
-// 03_fetch_ats/main.js — v2.3
-// Fetch jobs either:
-//  A) directly from discovered ATS tenants (legacy v2.2 behavior), OR
-//  B) via the Apify Store actor "fantastic-jobs/career-site-job-listing-api" (recommended)
+// 03_fetch_ats/main.js — v2.4 (Feed mode default)
+// Fetch jobs via Fantastic.jobs “Career Site Job Listing Feed” (6-month active jobs).
 // Writes to KV store "job-pipeline":
-//  - merged.json (normalized records)
-//  - manifest.log (every fetch + status/errors)
-//  - fetch_snapshot.json (counters)
+// - merged.json (normalized records)
+// - manifest.log (every fetch + status/errors)
+// - fetch_snapshot.json (counters)
 
 import { Actor } from 'apify';
-import fetch from 'node-fetch';
-import { ApifyClient } from 'apify-client';
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function iso(d) {
-  try { return new Date(d).toISOString(); } catch { return null; }
-}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function safeLower(s) { return (s || '').toString().toLowerCase(); }
 
@@ -28,45 +21,50 @@ function slugify(input) {
     .slice(0, 60) || null;
 }
 
+// Best-effort location formatting from Fantastic feed items.
 function fmtLocationFromFantastic(item) {
-  // Prefer AI / derived location fields when present.
-  const workArr = item?.ai_work_arrangement || '';
-  const locationType = item?.location_type || '';
-  const remoteDerived = item?.remote_derived === true;
+  const workArr = item?.ai_work_arrangement || item?.aiWorkArrangement || '';
+  const locationType = item?.location_type || item?.locationType || '';
+  const remoteDerived = item?.remote_derived === true || item?.remoteDerived === true;
 
   if (remoteDerived || locationType === 'TELECOMMUTE' || /remote/i.test(workArr)) {
-    // If they restrict remote location, show that
-    const rl = item?.ai_remote_location?.[0] || item?.ai_remote_location_derived?.[0] || null;
+    const rl =
+      item?.ai_remote_location?.[0] ||
+      item?.ai_remote_location_derived?.[0] ||
+      item?.aiRemoteLocation?.[0] ||
+      item?.aiRemoteLocationDerived?.[0] ||
+      null;
+
     if (rl && typeof rl === 'string') return `Remote (${rl})`;
-    // If derived countries exist, show first
-    const c = item?.countries_derived?.[0] || null;
+
+    const c = item?.countries_derived?.[0] || item?.countriesDerived?.[0] || null;
     if (c) return `Remote (${c})`;
+
     return 'Remote';
   }
 
-  const loc = item?.locations_derived?.[0] || null;
-  if (loc && typeof loc === 'object') {
-    const city = loc.city || '';
-    const admin = loc.admin || '';
-    const country = loc.country || '';
+  const locObj = item?.locations_derived?.[0] || item?.locationsDerived?.[0] || null;
+  if (locObj && typeof locObj === 'object') {
+    const city = locObj.city || '';
+    const admin = locObj.admin || locObj.region || '';
+    const country = locObj.country || '';
     const parts = [city, admin, country].filter(Boolean);
     if (parts.length) return parts.join(', ');
   }
 
-  // Fallbacks
-  const raw = item?.locations_raw?.[0] || item?.locations_alt_raw?.[0] || null;
+  const raw = item?.locations_raw?.[0] || item?.locations_alt_raw?.[0] || item?.locationsRaw?.[0] || null;
   if (raw) return typeof raw === 'string' ? raw : JSON.stringify(raw);
-  return item?.organization || null;
+
+  // fallback
+  return item?.location || item?.organization || null;
 }
 
 function fmtSalaryFromFantastic(item) {
-  // Prefer AI enriched salary fields (min/max/value + currency + unit).
-  const cur = item?.ai_salary_currency || null;
-  const unit = item?.ai_salary_unittext || null;
-
-  const min = item?.ai_salary_minvalue;
-  const max = item?.ai_salary_maxvalue;
-  const val = item?.ai_salary_value;
+  const cur = item?.ai_salary_currency || item?.aiSalaryCurrency || null;
+  const unit = item?.ai_salary_unittext || item?.aiSalaryUnittext || null;
+  const min = item?.ai_salary_minvalue ?? item?.aiSalaryMinvalue;
+  const max = item?.ai_salary_maxvalue ?? item?.aiSalaryMaxvalue;
+  const val = item?.ai_salary_value ?? item?.aiSalaryValue;
 
   const fmtNum = (n) => {
     if (typeof n !== 'number' || !isFinite(n)) return null;
@@ -82,197 +80,71 @@ function fmtSalaryFromFantastic(item) {
   if (typeof val === 'number') {
     return `${prefix}${fmtNum(val)}${unit ? `/${unit.toLowerCase()}` : ''}`;
   }
-
-  // Raw schema (Google for Jobs) fallback
-  const sr = item?.salary_raw;
-  if (sr && typeof sr === 'object') {
-    const rc = sr.currency || sr.currencyCode || null;
-    const ru = sr.unitText || sr.unit || null;
-    const rmin = sr.minValue || sr.min_value || null;
-    const rmax = sr.maxValue || sr.max_value || null;
-    const rval = sr.value || null;
-    const rprefix = (rc === 'USD') ? '$' : (rc ? `${rc} ` : '');
-    if (typeof rmin === 'number' && typeof rmax === 'number') {
-      return `${rprefix}${fmtNum(rmin)}–${rprefix}${fmtNum(rmax)}${ru ? `/${ru.toLowerCase()}` : ''}`;
-    }
-    if (typeof rval === 'number') {
-      return `${rprefix}${fmtNum(rval)}${ru ? `/${ru.toLowerCase()}` : ''}`;
-    }
-  }
-
   return '';
 }
 
-// -------------------- Legacy ATS fetchers (v2.2) --------------------
-
-async function fetchAshby(slug, manifest) {
-  const url = `https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobBoardWithTeams`;
-  const body = {
-    operationName: "ApiJobBoardWithTeams",
-    variables: { organizationHostedJobsPageName: slug },
-    query: "query ApiJobBoardWithTeams($organizationHostedJobsPageName: String!) { jobBoardWithTeams(organizationHostedJobsPageName: $organizationHostedJobsPageName) { jobs { id title location { name } publishedAt jobUrl applyUrl descriptionHtml descriptionPlain } } }"
-  };
-  manifest.push(`GET (POST) ${url} [ashby:${slug}]`);
-  const res = await fetch(url, { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
-  const data = await res.json();
-  const jobs = data?.data?.jobBoardWithTeams?.jobs || [];
-  return jobs.map(j => ({
-    title: j.title,
-    url: j.jobUrl || j.applyUrl,
-    location: j.location?.name || null,
-    published: j.publishedAt || null,
-    raw: j,
-    source: 'ashby',
-    company: slug,
-    company_slug: slug,
-    whereFound: `https://jobs.ashbyhq.com/${slug}`
-  }));
-}
-
-async function fetchWorkable(slug, manifest) {
-  const url = `https://apply.workable.com/api/v3/accounts/${slug}/jobs`;
-  manifest.push(`GET ${url} [workable:${slug}]`);
-  const res = await fetch(url);
-  const data = await res.json();
-  const jobs = data?.results || [];
-  return jobs.map(j => ({
-    title: j.title,
-    url: j.url,
-    location: j.location?.location_str || null,
-    published: j.published_at || null,
-    raw: j,
-    source: 'workable',
-    company: slug,
-    company_slug: slug,
-    whereFound: `https://apply.workable.com/${slug}`
-  }));
-}
-
-async function fetchSmartRecruiters(slug, manifest) {
-  const base = `https://api.smartrecruiters.com/v1/companies/${slug}/postings`;
-  const out = [];
-  for (let offset = 0; offset <= 400; offset += 100) {
-    const url = `${base}?limit=100&offset=${offset}`;
-    manifest.push(`GET ${url} [smartrecruiters:${slug}]`);
-    const res = await fetch(url);
-    const data = await res.json();
-    const postings = data?.content || [];
-    for (const p of postings) {
-      out.push({
-        title: p.name,
-        url: p.ref?.applyUrl || p.ref?.url || p.ref || null,
-        location: p.location?.city ? `${p.location.city}, ${p.location.country || ''}`.trim() : (p.location?.country || null),
-        published: p.releasedDate || null,
-        raw: p,
-        source: 'smartrecruiters',
-        company: slug,
-        company_slug: slug,
-        whereFound: `https://jobs.smartrecruiters.com/${slug}`
-      });
-    }
-    if (postings.length < 100) break;
-    await sleep(250);
-  }
-  return out;
-}
-
-async function fetchWorkdayLight(tenant, manifest) {
-  const url = `https://${tenant}.myworkdayjobs.com/wday/cxs/${tenant}/External/jobs`;
-  manifest.push(`GET ${url} [workday:${tenant}]`);
-  const res = await fetch(url);
-  const data = await res.json();
-  const jobs = data?.jobPostings || [];
-  return jobs.map(j => ({
-    title: j.title,
-    url: `https://${tenant}.myworkdayjobs.com/en-US/External/job/${j.externalPath || ''}`.replace(/\/+$/,''),
-    location: j.locationsText || null,
-    published: j.postedOn || null,
-    raw: j,
-    source: 'workday',
-    company: tenant,
-    company_slug: tenant,
-    whereFound: `https://${tenant}.myworkdayjobs.com`
-  }));
-}
-
-// -------------------- Fantastic.jobs Career Site Job Listing API --------------------
-
-async function fetchFantasticJobs(cfg, kv, manifest) {
-  const token = Actor.getEnv().token || process.env.APIFY_TOKEN;
-  if (!token) throw new Error('Missing APIFY_TOKEN (required to call Apify Store actors).');
-
-  // Auto-widen the time range to catch up if we missed a day.
-  const now = Date.now();
-  const last = await kv.getValue('fantastic_last_success.json'); // { finishedAtIso }
-  let timeRange = cfg.timeRange || '24h';
-  if (timeRange === '24h' && last?.finishedAtIso) {
-    const ms = now - new Date(last.finishedAtIso).getTime();
-    const hours = ms / 36e5;
-    if (hours > 36) {
-      timeRange = '7d';
-      manifest.push(`NOTE: Auto-widened fantastic timeRange to 7d (last success ${hours.toFixed(1)}h ago).`);
-    }
-  }
-
-  const actorId = cfg.actorId || 'fantastic-jobs/career-site-job-listing-api';
-  const limit = Number(cfg.limit || 500);
+async function fetchFantasticFeed(cfg, manifest) {
+  const actorId = cfg.actorId || 'fantastic-jobs/career-site-job-listing-feed';
+  const limit = Math.max(200, Math.min(5000, Number(cfg.limit || 500)));
 
   const input = {
-    timeRange,
     limit,
     includeAi: cfg.includeAi !== false,
     includeLinkedIn: cfg.includeLinkedIn === true,
-    titleSearch: cfg.titleSearch || ['Unity', 'Gameplay', 'Game:*'],
-    descriptionSearch: cfg.descriptionSearch || ['Unity', 'C#', 'CSharp', 'Unity3D', 'Unity2D'],
+    titleSearch: cfg.titleSearch || ['Unity'],
     locationSearch: cfg.locationSearch || ['United States'],
-    // Keep broad — LLM will disqualify on-site outside MA, backend-heavy, etc.
     aiWorkArrangementFilter: cfg.aiWorkArrangementFilter || ['Remote OK', 'Remote Solely', 'Hybrid', 'On-site'],
-    aiHasSalary: cfg.aiHasSalary === true ? true : false,
-    removeAgency: cfg.removeAgency === true ? true : false,
     descriptionType: cfg.descriptionType || 'text'
   };
 
-  // Log the actor call (but never log tokens).
-  manifest.push(`CALL actor ${actorId} input=${JSON.stringify({ ...input, titleSearch: input.titleSearch, descriptionSearch: input.descriptionSearch, locationSearch: input.locationSearch })}`);
+  manifest.push(`CALL actor ${actorId} input=${JSON.stringify(input)}`);
 
-  const client = new ApifyClient({ token });
-  const run = await client.actor(actorId).call(input);
+  // IMPORTANT: This uses Apify platform credentials (no APIFY_TOKEN required) but DOES require Full permissions.
+  const run = await Actor.call(actorId, input);
+
   const datasetId = run?.defaultDatasetId;
-  if (!datasetId) throw new Error(`Fantastic actor call succeeded but no defaultDatasetId was returned (runId=${run?.id || 'unknown'})`);
+  if (!datasetId) throw new Error(`Feed actor call succeeded but no defaultDatasetId returned (runId=${run?.id || 'unknown'})`);
 
+  // Read up to "limit" items from dataset
+  const client = Actor.apifyClient;
   const { items } = await client.dataset(datasetId).listItems({ limit });
+
   const normalized = (items || []).map(it => {
-    const company = it.organization || it.domain_derived || it.source_domain || 'Unknown';
+    const company = it.organization || it.company || it.domain_derived || it.domainDerived || it.source_domain || it.sourceDomain || 'Unknown';
     const slug = it.domain_derived ? slugify(it.domain_derived) : slugify(company);
+
     return {
-      title: it.title || null,
-      url: it.url || null,
+      title: it.title || it.job_title || it.jobTitle || null,
+      url: it.url || it.apply_url || it.applyUrl || it.job_url || it.jobUrl || null,
       location: fmtLocationFromFantastic(it),
-      published: it.date_posted || it.date_created || null,
+      published: it.date_posted || it.datePosted || it.date_created || it.dateCreated || it.published_at || it.publishedAt || null,
       salary: fmtSalaryFromFantastic(it),
       raw: it,
-      source: it.source || 'career-site',
+      source: it.source || 'career-site-feed',
       company,
       company_slug: slug,
-      whereFound: it.organization_url || it.source_domain || it.domain_derived || ''
+      whereFound: it.organization_url || it.organizationUrl || it.source_domain || it.sourceDomain || it.domain_derived || it.domainDerived || ''
     };
   });
 
-  await kv.setValue('fantastic_last_success.json', { finishedAtIso: new Date().toISOString(), runId: run?.id || null, datasetId, input });
-
-  return { normalized, meta: { runId: run?.id || null, datasetId, requestedLimit: limit, returned: normalized.length, timeRange } };
+  return {
+    normalized,
+    meta: {
+      runId: run?.id || null,
+      datasetId,
+      requestedLimit: limit,
+      returned: normalized.length
+    }
+  };
 }
-
-// -------------------- Main --------------------
 
 Actor.main(async () => {
   const kv = await Actor.openKeyValueStore('job-pipeline');
   const input = await Actor.getInput() || {};
-  const fetchMode = safeLower(input.fetchMode || 'fantastic_jobs_api'); // direct_ats | fantastic_jobs_api | hybrid
+  const fetchMode = safeLower(input.fetchMode || input.fetchModeOverride || 'fantastic_jobs_feed');
 
   const manifest = [];
   const records = [];
-
   const snapshot = {
     fetchMode,
     startedAt: new Date().toISOString(),
@@ -281,43 +153,15 @@ Actor.main(async () => {
     records_normalized: 0
   };
 
-  if (fetchMode === 'fantastic_jobs_api' || fetchMode === 'hybrid') {
-    const { normalized, meta } = await fetchFantasticJobs(input.fantastic || {}, kv, manifest);
-    records.push(...normalized);
-    snapshot.fantastic = meta;
+  if (fetchMode !== 'fantastic_jobs_feed') {
+    throw new Error(`This v2.4 build expects fetchMode="fantastic_jobs_feed". Got: ${fetchMode}`);
   }
 
-  if (fetchMode === 'direct_ats' || fetchMode === 'hybrid') {
-    const regCsv = await kv.getValue('companies_registry.csv');
-    if (!regCsv) throw new Error('Missing companies_registry.csv in KV store "job-pipeline". Run 02_update_registry first (or switch fetchMode to fantastic_jobs_api).');
-    const lines = regCsv.split('\n').map(s => s.trim()).filter(Boolean);
-    const rows = lines.slice(1).map(l => {
-      const [company, ats, slug] = l.split(',').map(s => (s || '').trim());
-      return { company, ats, slug };
-    }).filter(r => r.ats && r.slug);
+  const { normalized, meta } = await fetchFantasticFeed(input.fantastic || {}, manifest);
+  records.push(...normalized);
+  snapshot.fantastic = meta;
 
-    for (const r of rows) {
-      try {
-        let jobs = [];
-        if (r.ats === 'ashby') jobs = await fetchAshby(r.slug, manifest);
-        else if (r.ats === 'workable') jobs = await fetchWorkable(r.slug, manifest);
-        else if (r.ats === 'smartrecruiters') jobs = await fetchSmartRecruiters(r.slug, manifest);
-        else if (r.ats === 'workday') jobs = await fetchWorkdayLight(r.slug, manifest);
-        else {
-          manifest.push(`SKIP unsupported ATS ${r.ats} for ${r.company} (${r.slug})`);
-          continue;
-        }
-        records.push(...jobs);
-        snapshot.companies_success += 1;
-      } catch (e) {
-        snapshot.companies_failed += 1;
-        manifest.push(`ERROR ${r.ats}:${r.slug} ${e?.message || e}`);
-      }
-      await sleep(250);
-    }
-  }
-
-  // De-dupe within this run (by URL)
+  // De-dupe within this run by URL
   const seen = new Set();
   const deduped = [];
   for (const r of records) {
@@ -336,4 +180,7 @@ Actor.main(async () => {
   await kv.setValue('fetch_snapshot.json', snapshot);
 
   console.log(`Fetch complete. Normalized ${deduped.length} records.`);
+  if (deduped.length >= 200) {
+    await sleep(1); // no-op-ish; keeps log ordering stable
+  }
 });

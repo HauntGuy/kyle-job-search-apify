@@ -1,0 +1,21 @@
+{
+    "fantastic": {
+        "limit": 500,
+        "includeAi": true,
+        "includeLinkedIn": true,
+        "titleSearch": [
+            "Unity"
+        ],
+        "locationSearch": [
+            "United States"
+        ],
+        "aiWorkArrangementFilter": [
+            "Remote OK",
+            "Remote Solely",
+            "Hybrid",
+            "On-site"
+        ],
+        "descriptionType": "text"
+    },
+    "fetchMode": "fantastic_jobs_feed"
+}
