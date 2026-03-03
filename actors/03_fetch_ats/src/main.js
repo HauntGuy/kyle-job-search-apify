@@ -1,4 +1,4 @@
-// 03_fetch_ats/main.js — v2.4 (Feed mode default)
+// 03_fetch_ats/main.js — v2.4 (Feed mode default) 
 // Fetch jobs via Fantastic.jobs “Career Site Job Listing Feed” (6-month active jobs).
 // Writes to KV store "job-pipeline":
 // - merged.json (normalized records)
