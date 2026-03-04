@@ -2,8 +2,10 @@
   "name": "03_score_jobs",
   "version": "0.1.0",
   "type": "module",
+  "scripts": {
+    "start": "node src/main.js"
+  },
   "dependencies": {
-    "apify": "^3.2.0",
-    "node-fetch": "^3.3.2"
+    "apify": "^3.0.0"
   }
 }

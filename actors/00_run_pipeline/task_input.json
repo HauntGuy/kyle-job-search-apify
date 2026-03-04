@@ -1,13 +1,6 @@
 {
-  "steps": [
-    { "actorId": "HauntGuy/01a_collector_fantastic_feed", "input": {} },
-    { "actorId": "HauntGuy/01b_collector_linkedin_jobs", "input": {} },
-    { "actorId": "HauntGuy/02_merge_dedup", "input": {} },
-    { "actorId": "HauntGuy/03_score_jobs", "input": {} },
-    { "actorId": "HauntGuy/04_notify_email", "input": {} }
-  ],
-  "onFailure": {
-    "actorId": "HauntGuy/99_diagnostics_dump",
-    "input": {}
-  }
+  "configUrl": "http://forgaard.com/jobsearch/config.json",
+  "actorUser": "YOUR_APIFY_USERNAME_HERE",
+  "kvStoreName": "job-pipeline-v3",
+  "datasetPrefix": "jobsearch-v3"
 }

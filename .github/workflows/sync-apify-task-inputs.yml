@@ -1,12 +1,12 @@
 name: Sync Apify Task Inputs
 
 on:
-  workflow_dispatch:
   push:
+    branches: [ "main" ]
     paths:
       - "actors/**/task_input.json"
       - "tools/apify_tasks_map.json"
-      - "tools/sync_apify_tasks.js"
+      - ".github/workflows/sync-apify-task-inputs.yml"
 
 jobs:
   sync:
@@ -20,10 +20,8 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install deps (node-fetch)
-        run: npm init -y && npm install node-fetch@3
-
-      - name: Sync task inputs to Apify
+      - name: Sync task inputs
         env:
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
-        run: node tools/sync_apify_tasks.js tools/apify_tasks_map.json
+        run: |
+          node tools/sync_apify_task_inputs.cjs tools/apify_tasks_map.json

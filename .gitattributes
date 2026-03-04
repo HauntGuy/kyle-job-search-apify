@@ -1,2 +1,5 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Enforce LF in repo (Apify runs on Linux)
+* text=auto eol=lf
+
+# If you keep PowerShell scripts, keep CRLF for readability on Windows
+*.ps1 text eol=crlf

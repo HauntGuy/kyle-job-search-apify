@@ -1,5 +1,5 @@
 {
-  "name": "99_diagnostics_dump",
+  "name": "01_collect_jobs",
   "version": "0.1.0",
   "type": "module",
   "scripts": {

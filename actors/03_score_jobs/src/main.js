@@ -1,356 +1,411 @@
-// 03_score_jobs/src/main.js â€” v0.1.0 (overwrite accepted.csv)
-// Reads merged.json from KV store, runs LLM evaluation for Kyle fit,
-// and writes accepted.csv + scored.csv (Google Sheets friendly).
-//
-// Requires OPENAI_API_KEY as a Secret environment variable on this Actor.
-//
-// KV outputs:
-//  - accepted.csv
-//  - scored.csv
-//  - accepted_debug.json
-//  - run_report.json
+// actors/03_score_jobs/src/main.js
+// Scores merged jobs with an LLM using an external rubric file, writes scored + accepted datasets,
+// and produces accepted.csv in the KV store.
 
-import { Actor } from 'apify';
-import fetch from 'node-fetch';
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+import { Actor, log } from 'apify';
 
-const DEFAULT_THRESHOLD = 0.60;
-const DEFAULT_MODEL = 'gpt-4o-mini';
-
-function nowIso() { return new Date().toISOString(); }
-
-function escapeFormulaText(s) {
-  const t = (s || '').toString().replace(/"/g,'""');
-  if (/^[=+\-@]/.test(t)) return `'${t}`;
-  return t;
+function nowIso() {
+  return new Date().toISOString();
 }
 
-function csvEscape(value) {
-  const s = (value ?? '').toString();
-  const needs = /[",\n]/.test(s);
-  const out = s.replace(/"/g, '""');
-  return needs ? `"${out}"` : out;
+function safeRunId(runId) {
+  if (!runId) return null;
+  return String(runId).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80);
 }
 
-function toDaysAgo(published) {
+function makeRunId() {
+  return new Date().toISOString().replace(/[:.]/g, '-');
+}
+
+function datasetName(prefix, kind, runId) {
+  const p = String(prefix || 'jobsearch-v3').replace(/[^a-zA-Z0-9._-]/g, '-');
+  const r = safeRunId(runId) || makeRunId();
+  return `${p}--${kind}--${r}`;
+}
+
+async function fetchText(url, headers = {}) {
+  const u = url.includes('?') ? `${url}&cb=${Date.now()}` : `${url}?cb=${Date.now()}`;
+  const res = await fetch(u, { method: 'GET', headers });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}: ${text.slice(0, 500)}`);
+  return text;
+}
+
+async function fetchJson(url, headers = {}) {
+  const text = await fetchText(url, { ...headers, 'Accept': 'application/json' });
   try {
-    const d = new Date(published);
-    if (!isFinite(d.getTime())) return '';
-    const days = Math.floor((Date.now() - d.getTime()) / 86400000);
-    return String(Math.max(0, days));
-  } catch { return ''; }
-}
-
-function getDescription(rec) {
-  const raw = rec.raw || {};
-  if (raw.descriptionPlain) return raw.descriptionPlain;
-  if (raw.descriptionText) return raw.descriptionText;
-  if (raw.description_text) return raw.description_text;
-  if (raw.description_html) return raw.description_html;
-  return '';
-}
-
-function getSalaryHint(rec) {
-  if (rec.salary) return rec.salary;
-  const raw = rec.raw || {};
-  const cur = raw.ai_salary_currency;
-  const unit = raw.ai_salary_unittext;
-  const min = raw.ai_salary_minvalue;
-  const max = raw.ai_salary_maxvalue;
-  const val = raw.ai_salary_value;
-  const prefix = (cur === 'USD') ? '$' : (cur ? `${cur} ` : '');
-  const fmt = (n) => (typeof n === 'number' && isFinite(n)) ? Math.round(n).toLocaleString('en-US') : null;
-  if (typeof min === 'number' && typeof max === 'number') return `${prefix}${fmt(min)}â€“${prefix}${fmt(max)}${unit ? `/${unit.toLowerCase()}` : ''}`;
-  if (typeof val === 'number') return `${prefix}${fmt(val)}${unit ? `/${unit.toLowerCase()}` : ''}`;
-  return '';
-}
-
-function stripCodeFences(s) {
-  if (!s) return '';
-  return s.replace(/^\s*```(?:json)?\s*/i,'').replace(/\s*```\s*$/,'').trim();
-}
-
-function normalizeLocation(loc) {
-  if (!loc) return '';
-  const s = String(loc).trim();
-  if (!s) return '';
-  if (!s.startsWith('{')) return s;
-  try {
-    const obj = JSON.parse(s);
-    const parts = [];
-    if (obj.name) parts.push(obj.name);
-    const addr = obj.address;
-    if (addr && typeof addr === 'object') {
-      const city = addr.addressLocality;
-      const region = addr.addressRegion;
-      const country = addr.addressCountry;
-      const addrParts = [city, region, country].filter(Boolean);
-      if (addrParts.length) parts.push(addrParts.join(', '));
-    }
-    return parts.length ? parts.join(' â€” ') : s;
-  } catch { return s; }
-}
-
-function isProbablyRemoteText(s) {
-  const t = (s || '').toString().toLowerCase();
-  return /(remote|work from home|wfh|telecommut|distributed|anywhere)/i.test(t);
-}
-
-function isLocationDisqualifierReason(reason) {
-  const r = (reason || '').toString().toLowerCase();
-  return (
-    r.includes('on-site') ||
-    r.includes('onsite') ||
-    r.includes('hybrid') ||
-    r.includes('outside massachusetts') ||
-    r.includes('not in massachusetts') ||
-    r.includes('location')
-  );
-}
-
-function applyRemoteOverride(evalObj, locRaw, locNorm) {
-  const out = { ...evalObj };
-  const workMode = (out.work_mode || '').toString().toLowerCase();
-  const remoteByMode = workMode === 'remote';
-  const remoteByText = isProbablyRemoteText(locRaw) || isProbablyRemoteText(locNorm) || isProbablyRemoteText(out.location_interpreted) || isProbablyRemoteText(out.notes);
-  const isRemote = remoteByMode || remoteByText;
-
-  if (isRemote) {
-    out.work_mode = 'Remote';
-    out.location_ok = true;
-    const reasons = Array.isArray(out.disqualify_reasons) ? out.disqualify_reasons : [];
-    const nonLocReasons = reasons.filter(r => !isLocationDisqualifierReason(r));
-    const hadOnlyLoc = reasons.length > 0 && nonLocReasons.length === 0;
-    out.disqualify_reasons = nonLocReasons;
-    if (out.disqualify === true && hadOnlyLoc) {
-      out.disqualify = false;
-      out.notes = `${(out.notes || '').toString().slice(0, 260)} [Auto-fix: Remote override cleared location-only disqualifier]`.trim();
-    }
+    return JSON.parse(text);
+  } catch (e) {
+    throw new Error(`Config at ${url} is not valid JSON: ${e?.message || e}`);
   }
-  if (typeof out.location_interpreted !== 'string') out.location_interpreted = '';
-  if (!['high','medium','low'].includes((out.location_confidence || '').toString().toLowerCase())) out.location_confidence = 'low';
-  return out;
 }
 
-async function llmEvaluate({ apiKey, model, job }) {
-  const sys = `You are a strict job-fit evaluator for a specific candidate. You must follow the rubric exactly and output ONLY JSON.`;
+async function loadConfig(input) {
+  if (input?.config && typeof input.config === 'object') return input.config;
 
-  const user = `
-Candidate: Kyle Forgaard
-Profile:
-- 7 years professional Unity/C# (mobile/casual), some C++/Lua, some React experience (not React expert).
-- Strong in client-side gameplay/UI/tools in Unity. Unity 2D preferred; Unity 3D OK if not lead/architect.
+  const configUrl =
+    input?.configUrl ||
+    process.env.JOBSEARCH_CONFIG_URL ||
+    process.env.CONFIG_URL;
 
-Hard disqualifiers (set disqualify=true ONLY when clearly true):
-- Not primarily a software engineering / programming role.
-- VR/XR/AR focus REQUIRED.
-- Backend-heavy or full-stack-primary.
-- On-site or Hybrid REQUIRED outside Massachusetts (MA). (Remote anywhere in the United States is OK.)
-- Salary explicitly max < 90000 USD/year AND no explicit equity/rev-share/commission upside.
-- Visa targeting / sponsorship pipeline ONLY (disqualify=true): postings that explicitly target OPT/CPT/H4 EAD/TN/E3-only, H1B-only/transfer-only, or "non-immigrant visa people".
-
-Return JSON with EXACT keys:
-{
-  "score": number,
-  "disqualify": boolean,
-  "disqualify_reasons": string[],
-  "work_mode": "Remote"|"Hybrid"|"On-site"|"Unclear",
-  "location_ok": boolean,
-  "location_interpreted": string,
-  "location_confidence": "high"|"medium"|"low",
-  "salary_text": string,
-  "notes": string
+  if (!configUrl) {
+    throw new Error('Missing configUrl (set in task input, or JOBSEARCH_CONFIG_URL env var).');
+  }
+  return await fetchJson(configUrl);
 }
 
-Job:
-Title: ${job.title || ''}
-Company: ${job.company || ''}
-Location (raw): ${job.locationRaw || ''}
-Location (normalized): ${job.locationNorm || ''}
-Source salary hint: ${job.salaryHint || ''}
+function csvEscape(val) {
+  const s = String(val ?? '');
+  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
 
-Description:
-${job.description || ''}
+function toInt(v, d = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.round(n) : d;
+}
 
-Output ONLY the JSON object.`;
+function toFloat(v, d = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : d;
+}
+
+function normalizeLocationOk(v) {
+  if (v === true) return 'yes';
+  if (v === false) return 'no';
+  if (!v) return 'unknown';
+  const s = String(v).toLowerCase();
+  if (s.includes('yes') || s.includes('ok') || s.includes('true')) return 'yes';
+  if (s.includes('no') || s.includes('false')) return 'no';
+  return 'unknown';
+}
+
+async function sleep(ms) {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
+async function callOpenAIJson({ apiKey, model, messages, maxOutputTokens = 700 }) {
+  // Uses the OpenAI Responses API.
+  // NOTE: This actor expects OPENAI_API_KEY to be set as an env var.
+  const url = 'https://api.openai.com/v1/responses';
 
   const payload = {
     model,
-    input: [
-      { role: 'system', content: [{ type: 'input_text', text: sys }] },
-      { role: 'user', content: [{ type: 'input_text', text: user }] }
-    ],
-    temperature: 0,
-    text: { format: { type: "json_object" } }
+    input: messages,
+    temperature: 0.2,
+    max_output_tokens: maxOutputTokens,
+    text: { format: { type: 'json_object' } },
   };
 
-  const res = await fetch('https://api.openai.com/v1/responses', {
+  const res = await fetch(url, {
     method: 'POST',
     headers: {
+      'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
     },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
   });
 
-  const text = await res.text();
-  if (res.status >= 300) throw new Error(`OpenAI error ${res.status}: ${text}`);
+  const json = await res.json().catch(async () => ({ _raw: await res.text() }));
 
-  const data = JSON.parse(text);
-  const outText =
-    (typeof data.output_text === 'string' && data.output_text.trim())
-      ? data.output_text.trim()
-      : (
-          Array.isArray(data.output)
-            ? data.output
-                .flatMap(o => Array.isArray(o.content) ? o.content : [])
-                .map(c => (c && typeof c.text === 'string') ? c.text : '')
-                .filter(Boolean)
-                .join('')
-                .trim()
-            : ''
-        );
+  if (!res.ok) {
+    const msg = json?.error?.message || JSON.stringify(json).slice(0, 500);
+    const code = json?.error?.code || res.status;
+    const err = new Error(`OpenAI API error (${res.status} / ${code}): ${msg}`);
+    err.status = res.status;
+    err.body = json;
+    throw err;
+  }
 
-  if (!outText) throw new Error(`Empty LLM output. keys=${Object.keys(data || {}).join(',')}`);
-  const cleaned = stripCodeFences(outText);
-  return JSON.parse(cleaned);
+  const text = json?.output_text;
+  if (!text) {
+    throw new Error(`OpenAI response missing output_text: ${JSON.stringify(json).slice(0, 500)}`);
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    throw new Error(`Model did not return valid JSON: ${e?.message || e}\n${text.slice(0, 500)}`);
+  }
+}
+
+async function withRetries(fn, { retries = 3, baseMs = 800 } = {}) {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (e) {
+      attempt += 1;
+      const status = e?.status || 0;
+      const retryable = status === 429 || status >= 500;
+      if (attempt > retries || !retryable) throw e;
+      const wait = baseMs * Math.pow(2, attempt - 1);
+      log.warning(`Retryable error (status=${status}). Waiting ${wait}ms then retrying...`);
+      await sleep(wait);
+    }
+  }
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const results = new Array(items.length);
+  let idx = 0;
+
+  async function worker() {
+    while (true) {
+      const myIdx = idx;
+      idx += 1;
+      if (myIdx >= items.length) return;
+      results[myIdx] = await mapper(items[myIdx], myIdx);
+    }
+  }
+
+  const workers = [];
+  for (let i = 0; i < Math.max(1, concurrency); i++) workers.push(worker());
+  await Promise.all(workers);
+  return results;
+}
+
+function truncate(s, maxChars) {
+  const t = String(s || '');
+  if (t.length <= maxChars) return t;
+  return t.slice(0, maxChars) + '\n\n[TRUNCATED]';
 }
 
 Actor.main(async () => {
-  const input = await Actor.getInput() || {};
-  const kvStoreName = (input.kvStoreName || 'job-pipeline').toString();
-  const kv = await Actor.openKeyValueStore(kvStoreName);
+  const input = (await Actor.getInput()) || {};
+  const config = await loadConfig(input);
 
-  const threshold = Number(input.threshold ?? DEFAULT_THRESHOLD);
-  const prefilterMode = (input.prefilterMode || 'none').toString();
-  const model = (input.openaiModel || DEFAULT_MODEL).toString();
-
-  const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || '').trim();
-
-  const merged = await kv.getValue('merged.json') || [];
-  const total = Array.isArray(merged) ? merged.length : 0;
-
-  const report = {
-    startedAt: nowIso(),
-    total_records: total,
-    prefilterMode,
-    threshold,
-    model,
-    scored: 0,
-    accepted: 0,
-    errors: 0,
-    note: ''
-  };
-
-  let candidates = Array.isArray(merged) ? merged : [];
-  if (prefilterMode === 'light') {
-    candidates = candidates.filter(r => ((r.title || '').toLowerCase().includes('unity')));
-  }
-
-  if (!OPENAI_API_KEY) {
-    report.note = 'Missing OPENAI_API_KEY in Actor env vars; scoring skipped.';
-    await kv.setValue('accepted.csv', 'Company,Job Title,Salary,Where,Score,Age (days),Where Found\n', { contentType: 'text/csv' });
-    await kv.setValue('scored.csv', 'Company,Job Title,Salary,Where,Score,Disqualified,Location OK,Location Interpreted,Location Confidence,Disqualify Reasons,Notes,Age (days),Where Found\n', { contentType: 'text/csv' });
-    await kv.setValue('accepted_debug.json', []);
-    report.finishedAt = nowIso();
-    await kv.setValue('run_report.json', report);
-    console.log(report.note);
+  const scoringCfg = config?.scoring || {};
+  if (scoringCfg.enabled === false) {
+    log.warning('Scoring disabled by config.scoring.enabled=false');
     return;
   }
 
-  const accepted = [];
-  const acceptedDebug = [];
-  const scored = [];
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error('Missing OPENAI_API_KEY env var on 03_score_jobs actor.');
 
-  for (const r of candidates) {
-    const desc = (getDescription(r) || '').toString();
-    const descTrunc = desc.length > 4000 ? desc.slice(0, 4000) + 'â€¦' : desc;
+  const runId = input.runId || makeRunId();
+  const kvStoreName = input.kvStoreName || config.kvStoreName || 'job-pipeline-v3';
+  const datasetPrefix = input.datasetPrefix || config.datasetPrefix || 'jobsearch-v3';
 
-    const locRaw = (r.location || '').toString();
-    const locNorm = normalizeLocation(locRaw);
+  const model = String(scoringCfg.model || 'gpt-4o-mini');
+  const threshold = toInt(scoringCfg.threshold ?? 70, 70);
+  const gateOnLocation = !!scoringCfg.gateOnLocation;
+  const concurrency = toInt(scoringCfg.concurrency ?? 4, 4);
+  const maxDescChars = toInt(scoringCfg.maxDescriptionChars ?? 12000, 12000);
 
-    const job = {
-      title: r.title || '',
-      company: r.company || '',
-      locationRaw: locRaw,
-      locationNorm: locNorm,
-      salaryHint: getSalaryHint(r),
-      description: descTrunc
+  const rubricUrl = String(scoringCfg.rubricUrl || '').trim();
+  if (!rubricUrl) throw new Error('Missing config.scoring.rubricUrl (should point to a text/markdown rubric file).');
+
+  const rubricText = await fetchText(rubricUrl, { 'Accept': 'text/plain,text/markdown,text/*' });
+
+  const kv = await Actor.openKeyValueStore(kvStoreName);
+
+  const mergedInfo = await kv.getValue('merged_dataset.json');
+  if (!mergedInfo?.name) throw new Error('Missing merged_dataset.json in KV store (run 02_merge_dedup first).');
+
+  const mergedDataset = await Actor.openDataset(mergedInfo.name);
+
+  const scoredDatasetName = datasetName(datasetPrefix, 'scored', runId);
+  const acceptedDatasetName = datasetName(datasetPrefix, 'accepted', runId);
+  const scoredDataset = await Actor.openDataset(scoredDatasetName);
+  const acceptedDataset = await Actor.openDataset(acceptedDatasetName);
+
+  log.info(`Scoring merged dataset "${mergedInfo.name}" -> scored="${scoredDatasetName}", accepted="${acceptedDatasetName}"`);
+  log.info(`Model=${model}, threshold=${threshold}, concurrency=${concurrency}, gateOnLocation=${gateOnLocation}`);
+
+  const startedAt = nowIso();
+
+  // Load all merged jobs (paginate)
+  const pageSize = 100;
+  const mergedJobs = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const { items } = await mergedDataset.getData({ offset, limit: pageSize });
+    if (!items || items.length === 0) break;
+    mergedJobs.push(...items);
+  }
+  log.info(`Loaded ${mergedJobs.length} merged jobs.`);
+
+  const results = await mapWithConcurrency(mergedJobs, concurrency, async (job, idx) => {
+    const jobForPrompt = {
+      title: job.title || '',
+      company: job.company || '',
+      location: job.location || '',
+      url: job.url || '',
+      applyUrl: job.applyUrl || '',
+      sources: job.sources || [job.source].filter(Boolean),
+      postedAt: job.postedAt || '',
+      salary: job.salary || '',
+      employmentType: job.employmentType || '',
+      description: truncate(job.description || '', maxDescChars),
     };
 
-    let evalObj;
+    const messages = [
+      {
+        role: 'system',
+        content:
+          rubricText +
+          '\n\n' +
+          'Return ONLY valid JSON, no markdown. Ensure fields: accept, score, confidence, location_ok, reason_short, reasons, red_flags, tags.',
+      },
+      {
+        role: 'user',
+        content: JSON.stringify(jobForPrompt, null, 2),
+      },
+    ];
+
     try {
-      evalObj = await llmEvaluate({ apiKey: OPENAI_API_KEY, model, job });
-    } catch (e) {
-      report.errors += 1;
-      const msg = String(e?.message || e);
-      if (!report.note) report.note = `First LLM error: ${msg}`.slice(0, 900);
-      console.log(`LLM error: ${msg}`);
-      evalObj = {
-        score: 0,
-        disqualify: true,
-        disqualify_reasons: ['LLM_ERROR'],
-        work_mode: 'Unclear',
-        location_ok: false,
-        location_interpreted: '',
-        location_confidence: 'low',
-        salary_text: '',
-        notes: msg
+      const evaluation = await withRetries(
+        () => callOpenAIJson({ apiKey, model, messages }),
+        { retries: 3, baseMs: 900 }
+      );
+
+      const score = toInt(evaluation.score ?? evaluation.Score ?? 0, 0);
+      const accept = !!(evaluation.accept ?? evaluation.Accept);
+      const locationOk = normalizeLocationOk(evaluation.location_ok ?? evaluation.locationOk ?? evaluation.location);
+
+      const accepted =
+        accept &&
+        score >= threshold &&
+        (!gateOnLocation || locationOk === 'yes');
+
+      const scored = {
+        ...job,
+        evaluation: {
+          ...evaluation,
+          score,
+          accept,
+          accepted,
+          location_ok: locationOk,
+        },
+        scoredAt: nowIso(),
       };
+
+      return scored;
+    } catch (err) {
+      log.error(`Scoring failed for idx=${idx} title="${job.title}": ${err?.message || err}`);
+
+      const scored = {
+        ...job,
+        evaluation: {
+          accept: false,
+          accepted: false,
+          score: 0,
+          confidence: 0,
+          location_ok: 'unknown',
+          reason_short: 'Scoring error',
+          reasons: [],
+          red_flags: [String(err?.message || err)],
+          tags: [],
+        },
+        scoredAt: nowIso(),
+        scoringError: String(err?.stack || err),
+      };
+      return scored;
     }
+  });
 
-    evalObj = applyRemoteOverride(evalObj, locRaw, locNorm);
+  // Push scored + accepted datasets
+  const scoredBatch = 200;
+  let acceptedCount = 0;
 
-    report.scored += 1;
+  for (let i = 0; i < results.length; i += scoredBatch) {
+    const batch = results.slice(i, i + scoredBatch);
+    await scoredDataset.pushData(batch);
 
-    const score = Number(evalObj.score || 0);
-    const disq = evalObj.disqualify === true;
-
-    const where = locNorm || locRaw || '';
-    const ageDays = toDaysAgo(r.published);
-    const salary = (evalObj.salary_text || getSalaryHint(r) || '').toString();
-
-    const companyLink = `=HYPERLINK("${(r.whereFound || r.url || '').replace(/"/g,'""')}","${escapeFormulaText(r.company || '')}")`;
-    const titleLink = `=HYPERLINK("${(r.url || '').replace(/"/g,'""')}","${escapeFormulaText(r.title || '')}")`;
-
-    const reasons = Array.isArray(evalObj.disqualify_reasons) ? evalObj.disqualify_reasons.join('; ') : '';
-    const notes = (evalObj.notes || '').toString().slice(0, 300);
-    const locInterp = (evalObj.location_interpreted || '').toString().slice(0, 160);
-    const locConf = (evalObj.location_confidence || '').toString().slice(0, 16);
-
-    scored.push([
-      companyLink, titleLink, salary, where,
-      isFinite(score) ? score.toFixed(2) : '',
-      disq ? 'YES' : 'NO',
-      evalObj.location_ok === true ? 'YES' : 'NO',
-      locInterp, locConf, reasons, notes, ageDays,
-      (r.whereFound || '')
-    ]);
-
-    # Acceptance: debug phase, no location gate
-    if (!disq && isFinite(score) && score >= threshold) {
-      accepted.push([companyLink, titleLink, salary, where, score.toFixed(2), ageDays, (r.whereFound || '')]);
-      acceptedDebug.push({ record: r, eval: evalObj });
+    const accepted = batch.filter((j) => j?.evaluation?.accepted);
+    if (accepted.length) {
+      acceptedCount += accepted.length;
+      await acceptedDataset.pushData(accepted);
     }
-
-    if (report.scored % 20 -eq 0) { await sleep(30); }
   }
 
-  report.accepted = accepted.length;
-  report.finishedAt = nowIso();
+  // Build accepted.csv (Google Sheets-friendly)
+  const acceptedJobs = results.filter((j) => j?.evaluation?.accepted);
 
-  const header = ['Company','Job Title','Salary','Where','Score','Age (days)','Where Found'];
-  const lines = [header.map(csvEscape).join(',')];
-  for (const row of accepted) { lines.push(row.map(csvEscape).join(',')); }
-  await kv.setValue('accepted.csv', lines.join('\n') + '\n', { contentType: 'text/csv' });
+  const header = [
+    'score',
+    'company',
+    'title',
+    'location',
+    'sources',
+    'apply_link',
+    'apply_url',
+    'job_link',
+    'job_url',
+    'posted_at',
+    'reason_short',
+    'tags',
+    'red_flags',
+  ];
 
-  const scoredHeader = ['Company','Job Title','Salary','Where','Score','Disqualified','Location OK','Location Interpreted','Location Confidence','Disqualify Reasons','Notes','Age (days)','Where Found'];
-  const scoredLines = [scoredHeader.map(csvEscape).join(',')];
-  for (const row of scored) { scoredLines.push(row.map(csvEscape).join(',')); }
-  await kv.setValue('scored.csv', scoredLines.join('\n') + '\n', { contentType: 'text/csv' });
+  const rows = [header.join(',')];
 
-  await kv.setValue('accepted_debug.json', acceptedDebug);
-  await kv.setValue('run_report.json', report);
+  for (const j of acceptedJobs) {
+    const score = toInt(j?.evaluation?.score ?? 0, 0);
+    const company = j.company || '';
+    const title = j.title || '';
+    const location = j.location || '';
+    const sources = (j.sources || [j.source].filter(Boolean)).join('; ');
+    const applyUrl = j.applyUrl || j.url || '';
+    const jobUrl = j.url || '';
 
-  console.log(`Scoring complete. Accepted ${accepted.length}/${report.scored} (threshold=${threshold}).`);
+    const applyLink = applyUrl ? `=HYPERLINK("${applyUrl.replace(/"/g, '""')}","apply")` : '';
+    const jobLink = jobUrl ? `=HYPERLINK("${jobUrl.replace(/"/g, '""')}","job")` : '';
+
+    const postedAt = j.postedAt || '';
+    const reasonShort = j?.evaluation?.reason_short || '';
+    const tags = Array.isArray(j?.evaluation?.tags) ? j.evaluation.tags.join('; ') : (j?.evaluation?.tags || '');
+    const redFlags = Array.isArray(j?.evaluation?.red_flags) ? j.evaluation.red_flags.join('; ') : (j?.evaluation?.red_flags || '');
+
+    const row = [
+      score,
+      csvEscape(company),
+      csvEscape(title),
+      csvEscape(location),
+      csvEscape(sources),
+      csvEscape(applyLink),
+      csvEscape(applyUrl),
+      csvEscape(jobLink),
+      csvEscape(jobUrl),
+      csvEscape(postedAt),
+      csvEscape(reasonShort),
+      csvEscape(tags),
+      csvEscape(redFlags),
+    ].join(',');
+
+    rows.push(row);
+  }
+
+  const acceptedCsv = rows.join('\n') + '\n';
+  await kv.setValue('accepted.csv', acceptedCsv, { contentType: 'text/csv; charset=utf-8' });
+
+  const finishedAt = nowIso();
+
+  const scoredInfo = { name: scoredDatasetName, itemCount: results.length };
+  const acceptedInfo = { name: acceptedDatasetName, itemCount: acceptedJobs.length };
+
+  await kv.setValue('scored_dataset.json', scoredInfo);
+  await kv.setValue('accepted_dataset.json', acceptedInfo);
+
+  const report = {
+    runId,
+    startedAt,
+    finishedAt,
+    kvStoreName,
+    datasetPrefix,
+    mergedDatasetName: mergedInfo.name,
+    scoredDatasetName,
+    acceptedDatasetName,
+    totalMerged: mergedJobs.length,
+    totalScored: results.length,
+    accepted: acceptedJobs.length,
+    threshold,
+    gateOnLocation,
+    model,
+    rubricUrl,
+  };
+  await kv.setValue('scoring_report.json', report);
+
+  log.info(`Scoring complete. accepted=${acceptedJobs.length}/${results.length}. accepted.csv written to KV store.`);
 });

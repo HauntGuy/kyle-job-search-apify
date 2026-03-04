@@ -1,5 +1,4 @@
 {
-  "kvStoreName": "job-pipeline",
-  "toEmail": "randy@forgaard.com",
-  "subjectPrefix": "[Kyle Job Search Bot] "
+  "configUrl": "http://forgaard.com/jobsearch/config.json",
+  "kvStoreName": "job-pipeline-v3"
 }

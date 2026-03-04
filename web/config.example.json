@@ -1,0 +1,91 @@
+{
+  "version": 3,
+  "kvStoreName": "job-pipeline-v3",
+  "datasetPrefix": "jobsearch-v3",
+  "run": {
+    "maxItemsPerSource": 300,
+    "maxTotalItems": 1200,
+    "stopOnCollectorErrors": false
+  },
+  "sources": [
+    {
+      "id": "fantastic_feed",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/career-site-job-listing-feed",
+      "adapter": "fantastic_feed",
+      "input": {
+        "titleSearch": "\"unity\" OR \"unity developer\" OR \"c++\" OR \"graphics programmer\" OR \"game developer\"",
+        "locationSearch": "\"United States\" OR \"Remote\" OR \"Massachusetts\"",
+        "maxItems": 200,
+        "descriptionType": "text",
+        "includeAi": true,
+        "includeLinkedIn": true,
+        "includeJobAggregator": true,
+        "aiWorkArrangementFilter": "All",
+        "makeRecordsUnique": true
+      }
+    },
+    {
+      "id": "linkedin_jobs",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
+      "adapter": "linkedin_generic",
+      "input": {
+        "titleSearch": "\"unity\" OR \"c++\" OR \"graphics\"",
+        "locationSearch": "\"United States\" OR \"Remote\" OR \"Massachusetts\"",
+        "maxItems": 100,
+        "descriptionType": "text"
+      }
+    },
+    {
+      "id": "remotive",
+      "type": "remotive",
+      "enabled": false,
+      "query": "unity developer",
+      "limit": 200
+    },
+    {
+      "id": "remoteok",
+      "type": "remoteok",
+      "enabled": false
+    },
+    {
+      "id": "rapidapi_jsearch",
+      "type": "rapidapi_jsearch",
+      "enabled": false,
+      "requiredEnv": [
+        "RAPIDAPI_KEY"
+      ],
+      "query": "unity developer in united states",
+      "page": 1,
+      "num_pages": 1,
+      "date_posted": "month"
+    }
+  ],
+  "merge": {
+    "preferLinkedInApply": true
+  },
+  "scoring": {
+    "enabled": true,
+    "model": "gpt-4o-mini",
+    "threshold": 70,
+    "gateOnLocation": false,
+    "concurrency": 4,
+    "maxDescriptionChars": 12000,
+    "rubricUrl": "http://forgaard.com/jobsearch/rubric.md"
+  },
+  "notify": {
+    "enabled": true,
+    "toEmail": "you@example.com",
+    "subjectPrefix": "[Kyle Job Search]",
+    "sendEvenIfEmpty": true
+  },
+  "diagnostics": {
+    "enabled": true,
+    "uploadUrlEnv": "DIAG_UPLOAD_URL",
+    "tokenEnv": "DIAG_UPLOAD_TOKEN",
+    "publicDiagnosticsUrl": "http://forgaard.com/jobsearch/diagnostics.html"
+  }
+}
