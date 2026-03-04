@@ -1,4 +1,4 @@
-﻿name: Sync Apify Task Inputs
+name: Sync Apify Task Inputs
 
 on:
   workflow_dispatch:

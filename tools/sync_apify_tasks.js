@@ -1,4 +1,4 @@
-﻿// tools/sync_apify_tasks.js
+// tools/sync_apify_tasks.js
 // Syncs actors/*/task_input.json into Apify Saved Task inputs.
 // Requires env var: APIFY_TOKEN (as GitHub Secret).
 //

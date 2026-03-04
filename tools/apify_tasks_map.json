@@ -1,4 +1,4 @@
-﻿{
+{
   "APIFY_BASE_URL": "https://api.apify.com",
   "TASKS": {
     "00_run_pipeline": {

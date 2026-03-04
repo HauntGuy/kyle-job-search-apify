@@ -1,4 +1,4 @@
-﻿// 02_merge_dedup/src/main.js â€” v0.1.0
+// 02_merge_dedup/src/main.js â€” v0.1.0
 // Reads multiple collector outputs from KV store and writes merged.json (deduped).
 
 import { Actor } from 'apify';

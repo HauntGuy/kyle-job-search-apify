@@ -1,4 +1,4 @@
-﻿// 04_notify_email/src/main.js â€” v0.1.0
+// 04_notify_email/src/main.js â€” v0.1.0
 // Emails accepted.csv via apify/send-mail
 
 import { Actor } from 'apify';

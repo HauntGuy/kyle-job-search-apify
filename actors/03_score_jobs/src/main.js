@@ -1,4 +1,4 @@
-﻿// 03_score_jobs/src/main.js â€” v0.1.0 (overwrite accepted.csv)
+// 03_score_jobs/src/main.js â€” v0.1.0 (overwrite accepted.csv)
 // Reads merged.json from KV store, runs LLM evaluation for Kyle fit,
 // and writes accepted.csv + scored.csv (Google Sheets friendly).
 //

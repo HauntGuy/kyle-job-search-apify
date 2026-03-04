@@ -1,4 +1,4 @@
-﻿// 99_diagnostics_dump/src/main.js â€” v0.1.0
+// 99_diagnostics_dump/src/main.js” v0.1.0
 // Builds a single HTML diagnostics report and uploads it to your GoDaddy cPanel site via diag_upload.php.
 //
 // Requires env vars on this actor:

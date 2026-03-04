@@ -1,4 +1,4 @@
-﻿{
+{
   "kvStoreName": "job-pipeline",
   "uploadUrl": "http://forgaard.com/jobsearch/diag_upload.php",
   "publicUrl": "http://forgaard.com/jobsearch/diagnostics.html"

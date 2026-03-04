@@ -1,4 +1,4 @@
-﻿// 01b_collector_linkedin_jobs/src/main.js â€” v0.1.0
+// 01b_collector_linkedin_jobs/src/main.js â€” v0.1.0
 // Calls Fantastic.jobs Advanced LinkedIn Job Search API and writes normalized results to KV store.
 // If the LinkedIn actor schema differs, set linkedin.inputOverride in task input.
 

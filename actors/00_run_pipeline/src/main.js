@@ -1,4 +1,4 @@
-﻿// 00_run_pipeline/src/main.js â€” v0.1.0
+// 00_run_pipeline/src/main.js â€” v0.1.0
 // Orchestrator: runs all pipeline steps sequentially using Actor.call, stops on first error.
 // If a step fails and onFailure.actorId is provided, it runs that actor as a best-effort diagnostics step.
 

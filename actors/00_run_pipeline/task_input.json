@@ -1,4 +1,4 @@
-﻿{
+{
   "steps": [
     { "actorId": "HauntGuy/01a_collector_fantastic_feed", "input": {} },
     { "actorId": "HauntGuy/01b_collector_linkedin_jobs", "input": {} },

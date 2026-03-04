@@ -1,4 +1,4 @@
-﻿{
+{
   "kvStoreName": "job-pipeline",
   "inputs": ["collector_fantastic_feed.json", "collector_linkedin_jobs.json"],
   "outputKey": "merged.json",

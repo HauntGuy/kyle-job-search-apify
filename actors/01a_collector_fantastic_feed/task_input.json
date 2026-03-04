@@ -1,4 +1,4 @@
-﻿{
+{
   "kvStoreName": "job-pipeline",
   "outputKey": "collector_fantastic_feed.json",
   "snapshotKey": "snapshot_01a_fantastic.json",

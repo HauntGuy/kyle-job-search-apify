@@ -1,4 +1,4 @@
-﻿{
+{
   "kvStoreName": "job-pipeline",
   "outputKey": "collector_linkedin_jobs.json",
   "snapshotKey": "snapshot_01b_linkedin.json",

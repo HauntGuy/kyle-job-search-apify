@@ -1,4 +1,4 @@
-﻿// 01a_collector_fantastic_feed/src/main.js â€” v0.1.0
+// 01a_collector_fantastic_feed/src/main.js â€” v0.1.0
 // Calls Fantastic.jobs Career Site Job Listing Feed and writes normalized results to KV store.
 //
 // KV outputs (in kvStoreName, default "job-pipeline"):
