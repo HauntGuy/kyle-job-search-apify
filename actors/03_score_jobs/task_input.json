@@ -1,0 +1,6 @@
+﻿{
+  "kvStoreName": "job-pipeline",
+  "prefilterMode": "none",
+  "threshold": 0.6,
+  "openaiModel": "gpt-4o-mini"
+}

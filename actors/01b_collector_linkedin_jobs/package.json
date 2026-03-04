@@ -1,0 +1,8 @@
+﻿{
+  "name": "01b_collector_linkedin_jobs",
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "apify": "^3.2.0"
+  }
+}

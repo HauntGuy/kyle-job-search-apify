@@ -1,0 +1,13 @@
+﻿{
+  "kvStoreName": "job-pipeline",
+  "outputKey": "collector_linkedin_jobs.json",
+  "snapshotKey": "snapshot_01b_linkedin.json",
+  "linkedin": {
+    "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
+    "limit": 200,
+    "keywords": ["Unity"],
+    "location": "United States",
+    "workplaceTypes": ["REMOTE", "HYBRID", "ON_SITE"],
+    "inputOverride": null
+  }
+}

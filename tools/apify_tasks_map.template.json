@@ -1,0 +1,26 @@
+﻿{
+  "APIFY_BASE_URL": "https://api.apify.com",
+  "TASKS": {
+    "00_run_pipeline": {
+      "apifyTaskId": "REPLACE_ME"
+    },
+    "01a_collector_fantastic_feed": {
+      "apifyTaskId": "REPLACE_ME"
+    },
+    "01b_collector_linkedin_jobs": {
+      "apifyTaskId": "REPLACE_ME"
+    },
+    "02_merge_dedup": {
+      "apifyTaskId": "REPLACE_ME"
+    },
+    "03_score_jobs": {
+      "apifyTaskId": "REPLACE_ME"
+    },
+    "04_notify_email": {
+      "apifyTaskId": "REPLACE_ME"
+    },
+    "99_diagnostics_dump": {
+      "apifyTaskId": "REPLACE_ME"
+    }
+  }
+}
