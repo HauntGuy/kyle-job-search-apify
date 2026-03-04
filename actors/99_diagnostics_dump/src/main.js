@@ -1,4 +1,4 @@
-// 99_diagnostics_dump/src/main.js — v0.1.1
+// 99_diagnostics_dump/src/main.js — v0.1.1 
 // Builds a single HTML diagnostics report and uploads it to your GoDaddy site via jobsearch/diag_upload.php.
 //
 // Requires env vars on this actor:
