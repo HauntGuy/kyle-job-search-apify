@@ -1,8 +1,8 @@
 {
-  "00_run_pipeline": {
-    "taskId": "REPLACE_WITH_APIFY_TASK_ID"
-  },
-  "99_diagnostics_dump": {
-    "taskId": "REPLACE_WITH_APIFY_TASK_ID"
-  }
+  "00_run_pipeline": { "taskId": "REPLACE_ME" },
+  "01_collect_jobs": { "taskId": "REPLACE_ME" },
+  "02_merge_dedup": { "taskId": "REPLACE_ME" },
+  "03_score_jobs": { "taskId": "REPLACE_ME" },
+  "04_notify_email": { "taskId": "REPLACE_ME" },
+  "99_diagnostics_dump": { "taskId": "REPLACE_ME" }
 }

@@ -1,0 +1,8 @@
+{
+  "00_run_pipeline": { "taskId": "pf0pvDyiRgaKJjpvm" },
+  "01_collect_jobs": { "taskId": "Dyi6N600rk2u2Mldh" },
+  "02_merge_dedup": { "taskId": "DHKq2joAmDLv440Wg" },
+  "03_score_jobs": { "taskId": "ZKIHCXx87xS9UXpKD" },
+  "04_notify_email": { "taskId": "rpZd77CCueSLTS01Q" },
+  "99_diagnostics_dump": { "taskId": "orAUomyzzlxeGXCcS" }
+}
