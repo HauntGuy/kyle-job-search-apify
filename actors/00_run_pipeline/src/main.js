@@ -54,12 +54,12 @@ function resolveActorId({ config, actorUser, step }) {
   }
 
   const defaults = {
-    collect: '01_collect_jobs',
-    merge: '02_merge_dedup',
-    score: '03_score_jobs',
-    notify: '04_notify_email',
-    diagnostics: '99_diagnostics_dump',
-  };
+  collect: '01-collect-jobs',
+  merge: '02-merge-dedup',
+  score: '03-score-jobs',
+  notify: '04-notify-email',
+  diagnostics: '99-diagnostics-dump',
+};
 
   const suffix = defaults[step];
   if (!suffix) throw new Error(`Unknown step "${step}"`);
