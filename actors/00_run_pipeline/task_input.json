@@ -1,6 +1,6 @@
 {
   "configUrl": "http://forgaard.com/jobsearch/config.json",
-  "actorUser": "YOUR_APIFY_USERNAME_HERE",
+  "actorUser": "pigletsquid",
   "kvStoreName": "job-pipeline-v3",
   "datasetPrefix": "jobsearch-v3"
 }
