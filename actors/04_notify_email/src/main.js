@@ -93,7 +93,6 @@ Actor.main(async () => {
     {
       filename: 'accepted.csv',
       data: b64(acceptedCsv || 'score,company,title\n'),
-      contentType: 'text/csv; charset=utf-8',
     },
   ];
 

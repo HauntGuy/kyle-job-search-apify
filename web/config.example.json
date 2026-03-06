@@ -76,7 +76,7 @@
   },
   "notify": {
     "enabled": true,
-    "toEmail": "you@example.com",
+    "toEmail": "randy@forgaard.com",
     "subjectPrefix": "[Kyle Job Search]",
     "sendEvenIfEmpty": true
   },
