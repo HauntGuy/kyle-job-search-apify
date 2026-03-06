@@ -84,6 +84,41 @@ async function sleep(ms) {
   await new Promise((r) => setTimeout(r, ms));
 }
 
+function stripCodeFences(s) {
+  if (!s) return '';
+  return String(s)
+    .replace(/^\s*```(?:json)?\s*/i, '')
+    .replace(/\s*```\s*$/i, '')
+    .trim();
+}
+
+function extractResponseText(resp) {
+  // Prefer top-level output_text if present
+  const direct = resp?.output_text;
+  if (typeof direct === 'string' && direct.trim()) return direct.trim();
+
+  // Otherwise, collect from output[].content[].text (Responses API structure)
+  const parts = [];
+  const output = resp?.output;
+  if (Array.isArray(output)) {
+    for (const o of output) {
+      if (o && typeof o.text === 'string') parts.push(o.text);
+      const content = o?.content;
+      if (Array.isArray(content)) {
+        for (const c of content) {
+          if (!c) continue;
+          if (typeof c.text === 'string') parts.push(c.text);
+          // Some variants may place text under "content"
+          if (typeof c.content === 'string') parts.push(c.content);
+        }
+      }
+    }
+  }
+
+  const joined = parts.join('').trim();
+  return joined;
+}
+
 async function callOpenAIJson({ apiKey, model, messages, maxOutputTokens = 700 }) {
   // Uses the OpenAI Responses API.
   // NOTE: This actor expects OPENAI_API_KEY to be set as an env var.
@@ -117,16 +152,18 @@ async function callOpenAIJson({ apiKey, model, messages, maxOutputTokens = 700 }
     throw err;
   }
 
-  const text = json?.output_text;
-  if (!text) {
-    throw new Error(`OpenAI response missing output_text: ${JSON.stringify(json).slice(0, 500)}`);
-  }
+const text = extractResponseText(json);
+if (!text) {
+  throw new Error(`OpenAI response missing output text: ${JSON.stringify(json).slice(0, 700)}`);
+}
 
-  try {
-    return JSON.parse(text);
-  } catch (e) {
-    throw new Error(`Model did not return valid JSON: ${e?.message || e}\n${text.slice(0, 500)}`);
-  }
+const cleaned = stripCodeFences(text);
+try {
+  return JSON.parse(cleaned);
+} catch (e) {
+  throw new Error(`Model did not return valid JSON: ${e?.message || e}
+${cleaned.slice(0, 700)}`);
+}
 }
 
 async function withRetries(fn, { retries = 3, baseMs = 800 } = {}) {
