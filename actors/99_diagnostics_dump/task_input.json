@@ -1,5 +1,4 @@
 {
-  "configUrl": "http://forgaard.com/jobsearch/config.json",
   "kvStoreName": "job-pipeline-v3",
-  "smokeTest": true
+  "smokeTest": false
 }

@@ -4,10 +4,14 @@
 // Writes job_search_log.html into a secret/unlisted GitHub Gist so it is readable via HTTPS.
 //
 // Required env vars on this Apify actor:
-// - JOBSEARCH_CONFIG_URL  (or configUrl in task input)
 // - GIST_ID
 // - GITHUB_TOKEN
 // - (optional) GIST_FILENAME  (defaults to "job_search_log.html")
+//
+// Optional runtime sources for kvStoreName:
+// - input.kvStoreName
+// - JOBSEARCH_KV_STORE_NAME
+// - fallback: "job-pipeline-v3"
 //
 // Optional task input:
 // - smokeTest: true (uploads a tiny page to prove gist update works)
@@ -22,27 +26,6 @@ function escHtml(s) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
-}
-
-async function fetchText(url, headers = {}) {
-  const u = url.includes('?') ? `${url}&cb=${Date.now()}` : `${url}?cb=${Date.now()}`;
-  const res = await fetch(u, { method: 'GET', headers });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}: ${text.slice(0, 500)}`);
-  return text;
-}
-
-async function fetchJson(url, headers = {}) {
-  const text = await fetchText(url, { ...headers, Accept: 'application/json' });
-  try { return JSON.parse(text); }
-  catch (e) { throw new Error(`Config at ${url} is not valid JSON: ${e?.message || e}`); }
-}
-
-async function loadConfig(input) {
-  if (input?.config && typeof input.config === 'object') return input.config;
-  const configUrl = input?.configUrl || process.env.JOBSEARCH_CONFIG_URL || process.env.CONFIG_URL;
-  if (!configUrl) throw new Error('Missing configUrl (set in task input, or JOBSEARCH_CONFIG_URL env var).');
-  return await fetchJson(configUrl);
 }
 
 async function updateGist({ gistId, token, filename, content, description }) {
@@ -68,11 +51,19 @@ async function updateGist({ gistId, token, filename, content, description }) {
   return text;
 }
 
+function jsonPre(obj) {
+  return `\n<pre>${escHtml(JSON.stringify(obj ?? null, null, 2))}</pre>\n`;
+}
+
 Actor.main(async () => {
   const input = (await Actor.getInput()) || {};
-  const config = await loadConfig(input);
 
-  const kvStoreName = (input.kvStoreName || config.kvStoreName || 'job-pipeline-v3').toString();
+  const kvStoreName = (
+    input.kvStoreName ||
+    process.env.JOBSEARCH_KV_STORE_NAME ||
+    'job-pipeline-v3'
+  ).toString();
+
   const kv = await Actor.openKeyValueStore(kvStoreName);
 
   const gistId = (process.env.GIST_ID || input.gistId || '').toString().trim();
@@ -103,7 +94,15 @@ Actor.main(async () => {
     });
 
     const rawUrl = `https://gist.githubusercontent.com/HauntGuy/${gistId}/raw/${filename}`;
-    await kv.setValue('diagnostics_report.json', { status: 'smoke_test_uploaded', at: ts, gistId, filename, rawUrl });
+    await kv.setValue('diagnostics_report.json', {
+      status: 'smoke_test_uploaded',
+      at: ts,
+      gistId,
+      filename,
+      rawUrl,
+      kvStoreName
+    });
+
     log.info(`Smoke test uploaded. Raw URL: ${rawUrl}`);
     return;
   }
@@ -139,21 +138,37 @@ Actor.main(async () => {
   const ts = nowIso();
   const runId = input.runId || data['run_meta.json']?.runId || '(unknown runId)';
 
-  // Summary warnings (limit hits, OpenAI rate limits, etc.)
-  const collectReport = data['collect_report.json'];
-  const scoringReport = data['scoring_report.json'];
+  const collectReport = data['collect_report.json'] || {};
+  const mergeReport = data['merge_report.json'] || {};
+  const scoringReport = data['scoring_report.json'] || {};
+  const notifyReport = data['notify_report.json'] || {};
+
+  const collected = Number(collectReport?.totals?.pushed ?? collectReport?.totals?.collected ?? 0);
+  const merged = Number(mergeReport?.outputTotal ?? mergeReport?.merged ?? 0);
+  const scored = Number(scoringReport?.totalScored ?? 0);
+  const accepted = Number(scoringReport?.accepted ?? 0);
 
   const limitHitWarnings = [];
-  if (collectReport && Array.isArray(collectReport.sources)) {
+  const sourceSummaryLines = [];
+
+  if (Array.isArray(collectReport.sources)) {
     for (const s of collectReport.sources) {
-      if (!s || s.status !== 'ok') continue;
+      if (!s) continue;
       const meta = s.meta || {};
-      if (meta && meta.requestedLimit != null && meta.returnedCount != null) {
-        if (meta.hitLimitLikely === true) {
-          limitHitWarnings.push(
-            `${s.id}: returned ${meta.returnedCount} which equals limit ${meta.requestedLimit} (may be capped)`
-          );
-        }
+      const id = s.id || '(unknown source)';
+      const returnedCount = meta.returnedCount;
+      const requestedLimit = meta.requestedLimit;
+
+      if (requestedLimit != null && returnedCount != null) {
+        sourceSummaryLines.push(`${id}: returned ${returnedCount} / limit ${requestedLimit}`);
+      } else if (s.itemCount != null) {
+        sourceSummaryLines.push(`${id}: returned ${s.itemCount}`);
+      }
+
+      if (meta.hitLimitLikely === true && requestedLimit != null && returnedCount != null) {
+        limitHitWarnings.push(
+          `${id}: returned ${returnedCount}, which exactly matched its limit of ${requestedLimit} (there may be more matching jobs).`
+        );
       }
     }
   }
@@ -161,34 +176,41 @@ Actor.main(async () => {
   const rateLimit429 = Number(scoringReport?.openai?.rateLimit429 || 0);
   const retryCount = Number(scoringReport?.openai?.retries || 0);
 
-  const summaryItems = [];
-  if (limitHitWarnings.length) {
+  const summaryItems = [
+    `<li><b>Collected:</b> ${collected}</li>`,
+    `<li><b>Merged:</b> ${merged}</li>`,
+    `<li><b>Scored:</b> ${scored}</li>`,
+    `<li><b>Accepted:</b> ${accepted}</li>`
+  ];
+
+  if (sourceSummaryLines.length) {
     summaryItems.push(
-      `<li><b>Hit limit likely:</b><br/>${limitHitWarnings.map(escHtml).join('<br/>')}</li>`
-    );
-  }
-  if (rateLimit429 > 0) {
-    summaryItems.push(
-      `<li><b>OpenAI rate limit (HTTP 429) seen:</b> ${rateLimit429} time(s). ` +
-      `Requests were retried with exponential backoff (retries=${retryCount}). ` +
-      `If this persists, reduce <code>scoring.concurrency</code> or request higher rate limits.</li>`
+      `<li><b>Per-source results:</b><br/>${sourceSummaryLines.map(escHtml).join('<br/>')}</li>`
     );
   }
 
-  const summarySection =
-    summaryItems.length
-      ? `<h2>Summary</h2><ul>${summaryItems.join('')}</ul>`
-      : `<h2>Summary</h2><p>No warnings.</p>`;
+  if (limitHitWarnings.length) {
+    summaryItems.push(
+      `<li><b>Possible source limits reached:</b><br/>${limitHitWarnings.map(escHtml).join('<br/>')}</li>`
+    );
+  }
+
+  if (rateLimit429 > 0) {
+    summaryItems.push(
+      `<li><b>OpenAI rate limiting occurred:</b> ${rateLimit429} time(s). ` +
+      `The scorer retried with exponential backoff (retry attempts: ${retryCount}). ` +
+      `If this becomes common, consider lowering <code>scoring.concurrency</code> or requesting higher rate limits from OpenAI.</li>`
+    );
+  }
+
+  const summarySection = `<h2>Summary</h2><ul>${summaryItems.join('')}</ul>`;
 
   const envCheck = {
     GIST_ID: gistId ? 'set' : 'missing',
     GITHUB_TOKEN: ghToken ? 'set' : 'missing',
     GIST_FILENAME: filename || '(default)',
-    JOBSEARCH_CONFIG_URL: process.env.JOBSEARCH_CONFIG_URL ? 'set' : 'missing',
-    CONFIG_URL: process.env.CONFIG_URL ? 'set' : 'missing'
+    JOBSEARCH_KV_STORE_NAME: process.env.JOBSEARCH_KV_STORE_NAME ? 'set' : 'missing'
   };
-
-  const jsonPre = (obj) => `\n<pre>${escHtml(JSON.stringify(obj ?? null, null, 2))}</pre>\n`;
 
   const html = `<!doctype html>
 <html>
@@ -207,7 +229,6 @@ Actor.main(async () => {
   ${summarySection}
 
   <h2>Diagnostics actor environment (99_diagnostics_dump only)</h2>
-  <p><i>Note: OPENAI_API_KEY is checked in 03_score_jobs, not here.</i></p>
   ${jsonPre(envCheck)}
 
   <h2>Reports</h2>
@@ -232,7 +253,14 @@ Actor.main(async () => {
   await updateGist({ gistId, token: ghToken, filename, content: html });
 
   const rawUrl = `https://gist.githubusercontent.com/HauntGuy/${gistId}/raw/${filename}`;
-  await kv.setValue('diagnostics_report.json', { status: 'uploaded', at: ts, gistId, filename, rawUrl });
+  await kv.setValue('diagnostics_report.json', {
+    status: 'uploaded',
+    at: ts,
+    gistId,
+    filename,
+    rawUrl,
+    kvStoreName
+  });
 
   log.info(`Job search log updated. Raw URL: ${rawUrl}`);
 });
