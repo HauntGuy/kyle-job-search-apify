@@ -138,11 +138,13 @@ Actor.main(async () => {
 
   const ts = nowIso();
   const runId = input.runId || data['run_meta.json']?.runId || '(unknown runId)';
+
   const envCheck = {
-    OPENAI_API_KEY: process.env.OPENAI_API_KEY ? 'set' : 'missing',
     GIST_ID: gistId ? 'set' : 'missing',
     GITHUB_TOKEN: ghToken ? 'set' : 'missing',
-    RAPIDAPI_KEY: process.env.RAPIDAPI_KEY ? 'set' : 'missing'
+    GIST_FILENAME: filename || '(default)',
+    JOBSEARCH_CONFIG_URL: process.env.JOBSEARCH_CONFIG_URL ? 'set' : 'missing',
+    CONFIG_URL: process.env.CONFIG_URL ? 'set' : 'missing'
   };
 
   const jsonPre = (obj) => `\n<pre>${escHtml(JSON.stringify(obj ?? null, null, 2))}</pre>\n`;
@@ -161,7 +163,8 @@ Actor.main(async () => {
 <body>
   <div class="ts">Updated: ${escHtml(ts)} | Run ID: ${escHtml(runId)}</div>
 
-  <h2>Environment</h2>
+  <h2>Diagnostics actor environment (99_diagnostics_dump only)</h2>
+  <p><i>Note: OPENAI_API_KEY is checked in 03_score_jobs, not here.</i></p>
   ${jsonPre(envCheck)}
 
   <h2>Reports</h2>
