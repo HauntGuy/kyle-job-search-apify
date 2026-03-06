@@ -1,0 +1,45 @@
+name: Build Apify Actors on Push
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "actors/**"
+      - "package.json"
+      - ".github/workflows/apify-build-actors.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Apify builds (v0.0)
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+        run: |
+          set -e
+
+          # Change version if your actors are not on 0.0
+          VERSION="0.0"
+          WAIT="60"
+          TAG="latest"
+
+          # Apify actor IDs use username~actor-name (note hyphens in actor slugs)
+          ACTORS=(
+            "pigletsquid~00-run-pipeline"
+            "pigletsquid~01-collect-jobs"
+            "pigletsquid~02-merge-dedup"
+            "pigletsquid~03-score-jobs"
+            "pigletsquid~04-notify-email"
+            "pigletsquid~99-diagnostics-dump"
+          )
+
+          for A in "${ACTORS[@]}"; do
+            echo "Building $A ..."
+            curl -sS -X POST \
+              "https://api.apify.com/v2/acts/${A}/builds?version=${VERSION}&tag=${TAG}&waitForFinish=${WAIT}" \
+              -H "Authorization: Bearer ${APIFY_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -o /dev/null
+          done
+
+          echo "Build triggers sent."
