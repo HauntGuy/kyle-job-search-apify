@@ -22,7 +22,7 @@
         "includeAi": true,
         "includeLinkedIn": true,
         "includeJobAggregator": true,
-        "aiWorkArrangementFilter": "All",
+        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
         "makeRecordsUnique": true
       }
     },
