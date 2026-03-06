@@ -23,6 +23,10 @@ function datasetName(prefix, kind, runId) {
   return `${p}--${kind}--${r}`;
 }
 
+async function sleep(ms) {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
 async function fetchText(url, headers = {}) {
   const u = url.includes('?') ? `${url}&cb=${Date.now()}` : `${url}?cb=${Date.now()}`;
   const res = await fetch(u, { method: 'GET', headers });
@@ -32,72 +36,31 @@ async function fetchText(url, headers = {}) {
 }
 
 async function fetchJson(url, headers = {}) {
-  const text = await fetchText(url, { ...headers, 'Accept': 'application/json' });
-  try {
-    return JSON.parse(text);
-  } catch (e) {
-    throw new Error(`Config at ${url} is not valid JSON: ${e?.message || e}`);
-  }
+  const text = await fetchText(url, { ...headers, Accept: 'application/json' });
+  try { return JSON.parse(text); }
+  catch (e) { throw new Error(`Non-JSON response from ${url}: ${e?.message || e}\n${text.slice(0, 500)}`); }
 }
 
 async function loadConfig(input) {
   if (input?.config && typeof input.config === 'object') return input.config;
-
-  const configUrl =
-    input?.configUrl ||
-    process.env.JOBSEARCH_CONFIG_URL ||
-    process.env.CONFIG_URL;
-
-  if (!configUrl) {
-    throw new Error('Missing configUrl (set in task input, or JOBSEARCH_CONFIG_URL env var).');
-  }
+  const configUrl = input?.configUrl || process.env.JOBSEARCH_CONFIG_URL || process.env.CONFIG_URL;
+  if (!configUrl) throw new Error('Missing configUrl (set in task input, or JOBSEARCH_CONFIG_URL env var).');
   return await fetchJson(configUrl);
 }
 
-function csvEscape(val) {
-  const s = String(val ?? '');
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
-
-function toInt(v, d = 0) {
-  const n = Number(v);
-  return Number.isFinite(n) ? Math.round(n) : d;
-}
-
-function toFloat(v, d = 0) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : d;
-}
-
-function normalizeLocationOk(v) {
-  if (v === true) return 'yes';
-  if (v === false) return 'no';
-  if (!v) return 'unknown';
-  const s = String(v).toLowerCase();
-  if (s.includes('yes') || s.includes('ok') || s.includes('true')) return 'yes';
-  if (s.includes('no') || s.includes('false')) return 'no';
-  return 'unknown';
-}
-
-async function sleep(ms) {
-  await new Promise((r) => setTimeout(r, ms));
+async function loadRubricText(rubricUrl) {
+  if (!rubricUrl) throw new Error('Missing scoring.rubricUrl in config.');
+  return await fetchText(rubricUrl);
 }
 
 function stripCodeFences(s) {
-  if (!s) return '';
-  return String(s)
+  return String(s || '')
     .replace(/^\s*```(?:json)?\s*/i, '')
     .replace(/\s*```\s*$/i, '')
     .trim();
 }
 
 function extractResponseText(resp) {
-  // Prefer top-level output_text if present
-  const direct = resp?.output_text;
-  if (typeof direct === 'string' && direct.trim()) return direct.trim();
-
-  // Otherwise, collect from output[].content[].text (Responses API structure)
   const parts = [];
   const output = resp?.output;
   if (Array.isArray(output)) {
@@ -119,10 +82,62 @@ function extractResponseText(resp) {
   return joined;
 }
 
-async function callOpenAIJson({ apiKey, model, messages, maxOutputTokens = 700 }) {
+function toInt(v, fallback = 0) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.round(n);
+}
+
+function normalizeLocationOk(v) {
+  const s = String(v ?? '').toLowerCase().trim();
+  if (s === 'yes' || s === 'true') return 'yes';
+  if (s === 'no' || s === 'false') return 'no';
+  return 'unknown';
+}
+
+async function listDatasetItems(datasetId, limit) {
+  const client = Actor.apifyClient;
+  const items = [];
+  let offset = 0;
+  const pageSize = 250;
+
+  while (items.length < limit) {
+    const { items: batch } = await client.dataset(datasetId).listItems({
+      offset,
+      limit: Math.min(pageSize, limit - items.length),
+      clean: true,
+    });
+    if (!batch || batch.length === 0) break;
+    items.push(...batch);
+    offset += batch.length;
+  }
+
+  return items;
+}
+
+async function parseRetryAfterMs(value) {
+  if (!value) return null;
+  const v = String(value).trim();
+  if (!v) return null;
+
+  // If Retry-After is seconds
+  if (/^\d+$/.test(v)) return Number(v) * 1000;
+
+  // If Retry-After is a HTTP date
+  const ms = Date.parse(v);
+  if (Number.isFinite(ms)) {
+    const delta = ms - Date.now();
+    return delta > 0 ? delta : null;
+  }
+  return null;
+}
+
+async function callOpenAIJson({ apiKey, model, messages, maxOutputTokens = 700, stats }) {
   // Uses the OpenAI Responses API.
   // NOTE: This actor expects OPENAI_API_KEY to be set as an env var.
   const url = 'https://api.openai.com/v1/responses';
+
+  if (stats) stats.calls += 1;
 
   const payload = {
     model,
@@ -141,6 +156,8 @@ async function callOpenAIJson({ apiKey, model, messages, maxOutputTokens = 700 }
     body: JSON.stringify(payload),
   });
 
+  const retryAfterMs = await parseRetryAfterMs(res.headers?.get?.('retry-after'));
+
   const json = await res.json().catch(async () => ({ _raw: await res.text() }));
 
   if (!res.ok) {
@@ -149,35 +166,57 @@ async function callOpenAIJson({ apiKey, model, messages, maxOutputTokens = 700 }
     const err = new Error(`OpenAI API error (${res.status} / ${code}): ${msg}`);
     err.status = res.status;
     err.body = json;
+    err.retryAfterMs = retryAfterMs;
+
+    if (stats) {
+      if (res.status === 429) stats.rateLimit429 += 1;
+      if (res.status >= 500) stats.serverErrors += 1;
+    }
+
     throw err;
   }
 
-const text = extractResponseText(json);
-if (!text) {
-  throw new Error(`OpenAI response missing output text: ${JSON.stringify(json).slice(0, 700)}`);
+  const text = extractResponseText(json);
+  if (!text) {
+    throw new Error(`OpenAI response missing output text: ${JSON.stringify(json).slice(0, 700)}`);
+  }
+
+  const cleaned = stripCodeFences(text);
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    throw new Error(`Model did not return valid JSON: ${e?.message || e}\n${cleaned.slice(0, 700)}`);
+  }
 }
 
-const cleaned = stripCodeFences(text);
-try {
-  return JSON.parse(cleaned);
-} catch (e) {
-  throw new Error(`Model did not return valid JSON: ${e?.message || e}
-${cleaned.slice(0, 700)}`);
-}
-}
-
-async function withRetries(fn, { retries = 3, baseMs = 800 } = {}) {
+async function withRetries(fn, { retries = 5, baseMs = 800, maxMs = 12000, stats } = {}) {
   let attempt = 0;
   while (true) {
     try {
       return await fn();
     } catch (e) {
       attempt += 1;
+
       const status = e?.status || 0;
       const retryable = status === 429 || status >= 500;
+
       if (attempt > retries || !retryable) throw e;
-      const wait = baseMs * Math.pow(2, attempt - 1);
-      log.warning(`Retryable error (status=${status}). Waiting ${wait}ms then retrying...`);
+
+      if (stats) stats.retries += 1;
+
+      // Exponential backoff with jitter
+      let wait = Math.min(maxMs, baseMs * Math.pow(2, attempt - 1));
+      const jitterFactor = 0.7 + Math.random() * 0.6; // 0.7–1.3
+      wait = Math.floor(wait * jitterFactor);
+
+      // Respect Retry-After if present
+      const ra = e?.retryAfterMs;
+      if (Number.isFinite(ra) && ra > 0) {
+        wait = Math.max(wait, Math.floor(ra));
+        if (stats) stats.maxRetryAfterMs = Math.max(stats.maxRetryAfterMs || 0, Math.floor(ra));
+      }
+
+      log.warning(`Retryable OpenAI error (status=${status}). Waiting ${wait}ms then retrying... (attempt ${attempt}/${retries})`);
       await sleep(wait);
     }
   }
@@ -208,6 +247,18 @@ function truncate(s, maxChars) {
   return t.slice(0, maxChars) + '\n\n[TRUNCATED]';
 }
 
+function csvEscape(value) {
+  const s = (value ?? '').toString();
+  const needs = /[",\n]/.test(s);
+  const out = s.replace(/"/g, '""');
+  return needs ? `"${out}"` : out;
+}
+
+function joinSources(sources) {
+  const arr = Array.isArray(sources) ? sources : [];
+  return arr.filter(Boolean).join(';');
+}
+
 Actor.main(async () => {
   const input = (await Actor.getInput()) || {};
   const config = await loadConfig(input);
@@ -225,43 +276,46 @@ Actor.main(async () => {
   const kvStoreName = input.kvStoreName || config.kvStoreName || 'job-pipeline-v3';
   const datasetPrefix = input.datasetPrefix || config.datasetPrefix || 'jobsearch-v3';
 
-  const model = String(scoringCfg.model || 'gpt-4o-mini');
-  const threshold = toInt(scoringCfg.threshold ?? 70, 70);
-  const gateOnLocation = !!scoringCfg.gateOnLocation;
-  const concurrency = toInt(scoringCfg.concurrency ?? 4, 4);
-  const maxDescChars = toInt(scoringCfg.maxDescriptionChars ?? 12000, 12000);
-
-  const rubricUrl = String(scoringCfg.rubricUrl || '').trim();
-  if (!rubricUrl) throw new Error('Missing config.scoring.rubricUrl (should point to a text/markdown rubric file).');
-
-  const rubricText = await fetchText(rubricUrl, { 'Accept': 'text/plain,text/markdown,text/*' });
+  const mergedDatasetName = input.mergedDatasetName || datasetName(datasetPrefix, 'merged', runId);
+  const scoredDatasetName = input.scoredDatasetName || datasetName(datasetPrefix, 'scored', runId);
+  const acceptedDatasetName = input.acceptedDatasetName || datasetName(datasetPrefix, 'accepted', runId);
 
   const kv = await Actor.openKeyValueStore(kvStoreName);
-
-  const mergedInfo = await kv.getValue('merged_dataset.json');
-  if (!mergedInfo?.name) throw new Error('Missing merged_dataset.json in KV store (run 02_merge_dedup first).');
-
-  const mergedDataset = await Actor.openDataset(mergedInfo.name);
-
-  const scoredDatasetName = datasetName(datasetPrefix, 'scored', runId);
-  const acceptedDatasetName = datasetName(datasetPrefix, 'accepted', runId);
+  const mergedDataset = await Actor.openDataset(mergedDatasetName);
   const scoredDataset = await Actor.openDataset(scoredDatasetName);
   const acceptedDataset = await Actor.openDataset(acceptedDatasetName);
 
-  log.info(`Scoring merged dataset "${mergedInfo.name}" -> scored="${scoredDatasetName}", accepted="${acceptedDatasetName}"`);
-  log.info(`Model=${model}, threshold=${threshold}, concurrency=${concurrency}, gateOnLocation=${gateOnLocation}`);
-
   const startedAt = nowIso();
 
-  // Load all merged jobs (paginate)
-  const pageSize = 100;
+  const model = String(scoringCfg.model || 'gpt-4o-mini');
+  const threshold = Number(scoringCfg.threshold ?? 70) || 70;
+  const gateOnLocation = !!scoringCfg.gateOnLocation;
+  const concurrency = Number(scoringCfg.concurrency ?? 4) || 4;
+  const maxDescChars = Number(scoringCfg.maxDescriptionChars ?? 12000) || 12000;
+  const rubricUrl = String(scoringCfg.rubricUrl || '');
+
+  const rubricText = await loadRubricText(rubricUrl);
+
+  log.info(`Scoring merged dataset "${mergedDatasetName}" -> scored="${scoredDatasetName}", accepted="${acceptedDatasetName}"`);
+  log.info(`Model=${model}, threshold=${threshold}, concurrency=${concurrency}, gateOnLocation=${gateOnLocation}`);
+
   const mergedJobs = [];
+  const pageSize = 250;
   for (let offset = 0; ; offset += pageSize) {
-    const { items } = await mergedDataset.getData({ offset, limit: pageSize });
+    const { items } = await Actor.apifyClient.dataset(mergedDataset.getId()).listItems({ offset, limit: pageSize, clean: true });
     if (!items || items.length === 0) break;
     mergedJobs.push(...items);
   }
   log.info(`Loaded ${mergedJobs.length} merged jobs.`);
+
+  const openAiStats = {
+    calls: 0,
+    retries: 0,
+    rateLimit429: 0,
+    serverErrors: 0,
+    maxRetryAfterMs: 0,
+    hardFailures: 0,
+  };
 
   const results = await mapWithConcurrency(mergedJobs, concurrency, async (job, idx) => {
     const jobForPrompt = {
@@ -293,8 +347,8 @@ Actor.main(async () => {
 
     try {
       const evaluation = await withRetries(
-        () => callOpenAIJson({ apiKey, model, messages }),
-        { retries: 3, baseMs: 900 }
+        () => callOpenAIJson({ apiKey, model, messages, stats: openAiStats }),
+        { retries: 5, baseMs: 800, maxMs: 12000, stats: openAiStats }
       );
 
       const score = toInt(evaluation.score ?? evaluation.Score ?? 0, 0);
@@ -320,6 +374,7 @@ Actor.main(async () => {
 
       return scored;
     } catch (err) {
+      if (err?.status || String(err?.message || '').includes('OpenAI')) openAiStats.hardFailures += 1;
       log.error(`Scoring failed for idx=${idx} title="${job.title}": ${err?.message || err}`);
 
       const scored = {
@@ -346,6 +401,7 @@ Actor.main(async () => {
   const scoredBatch = 200;
   let acceptedCount = 0;
 
+  const acceptedJobs = [];
   for (let i = 0; i < results.length; i += scoredBatch) {
     const batch = results.slice(i, i + scoredBatch);
     await scoredDataset.pushData(batch);
@@ -353,13 +409,12 @@ Actor.main(async () => {
     const accepted = batch.filter((j) => j?.evaluation?.accepted);
     if (accepted.length) {
       acceptedCount += accepted.length;
+      acceptedJobs.push(...accepted);
       await acceptedDataset.pushData(accepted);
     }
   }
 
   // Build accepted.csv (Google Sheets-friendly)
-  const acceptedJobs = results.filter((j) => j?.evaluation?.accepted);
-
   const header = [
     'score',
     'company',
@@ -373,65 +428,44 @@ Actor.main(async () => {
     'posted_at',
     'reason_short',
     'tags',
-    'red_flags',
+    'red_flags'
   ];
 
-  const rows = [header.join(',')];
-
+  const linesCsv = [header.map(csvEscape).join(',')];
   for (const j of acceptedJobs) {
-    const score = toInt(j?.evaluation?.score ?? 0, 0);
-    const company = j.company || '';
-    const title = j.title || '';
-    const location = j.location || '';
-    const sources = (j.sources || [j.source].filter(Boolean)).join('; ');
-    const applyUrl = j.applyUrl || j.url || '';
-    const jobUrl = j.url || '';
-
-    const applyLink = applyUrl ? `=HYPERLINK("${applyUrl.replace(/"/g, '""')}","apply")` : '';
-    const jobLink = jobUrl ? `=HYPERLINK("${jobUrl.replace(/"/g, '""')}","job")` : '';
-
-    const postedAt = j.postedAt || '';
-    const reasonShort = j?.evaluation?.reason_short || '';
-    const tags = Array.isArray(j?.evaluation?.tags) ? j.evaluation.tags.join('; ') : (j?.evaluation?.tags || '');
-    const redFlags = Array.isArray(j?.evaluation?.red_flags) ? j.evaluation.red_flags.join('; ') : (j?.evaluation?.red_flags || '');
+    const ev = j.evaluation || {};
+    const tags = Array.isArray(ev.tags) ? ev.tags.join(';') : '';
+    const redFlags = Array.isArray(ev.red_flags) ? ev.red_flags.join(';') : '';
 
     const row = [
-      score,
-      csvEscape(company),
-      csvEscape(title),
-      csvEscape(location),
-      csvEscape(sources),
-      csvEscape(applyLink),
-      csvEscape(applyUrl),
-      csvEscape(jobLink),
-      csvEscape(jobUrl),
-      csvEscape(postedAt),
-      csvEscape(reasonShort),
-      csvEscape(tags),
-      csvEscape(redFlags),
-    ].join(',');
+      ev.score ?? 0,
+      j.company || '',
+      j.title || '',
+      j.location || '',
+      joinSources(j.sources),
+      j.applyUrl || j.url || '',
+      j.applyUrl || '',
+      j.url || '',
+      j.url || '',
+      j.postedAt || '',
+      ev.reason_short || '',
+      tags,
+      redFlags,
+    ];
 
-    rows.push(row);
+    linesCsv.push(row.map(csvEscape).join(','));
   }
 
-  const acceptedCsv = rows.join('\n') + '\n';
-  await kv.setValue('accepted.csv', acceptedCsv, { contentType: 'text/csv; charset=utf-8' });
+  await kv.setValue('accepted.csv', linesCsv.join('\n') + '\n', { contentType: 'text/csv; charset=utf-8' });
 
   const finishedAt = nowIso();
-
-  const scoredInfo = { name: scoredDatasetName, itemCount: results.length };
-  const acceptedInfo = { name: acceptedDatasetName, itemCount: acceptedJobs.length };
-
-  await kv.setValue('scored_dataset.json', scoredInfo);
-  await kv.setValue('accepted_dataset.json', acceptedInfo);
-
   const report = {
     runId,
     startedAt,
     finishedAt,
     kvStoreName,
     datasetPrefix,
-    mergedDatasetName: mergedInfo.name,
+    mergedDatasetName: mergedDatasetName,
     scoredDatasetName,
     acceptedDatasetName,
     totalMerged: mergedJobs.length,
@@ -441,7 +475,17 @@ Actor.main(async () => {
     gateOnLocation,
     model,
     rubricUrl,
+    openai: openAiStats,
   };
+
+  if (openAiStats.rateLimit429 > 0) {
+    report.warnings = report.warnings || [];
+    report.warnings.push(
+      `OpenAI rate limit (HTTP 429) occurred ${openAiStats.rateLimit429} times. Requests were retried with exponential backoff. ` +
+      `If this persists, lower scoring.concurrency or request higher rate limits.`
+    );
+  }
+
   await kv.setValue('scoring_report.json', report);
 
   log.info(`Scoring complete. accepted=${acceptedJobs.length}/${results.length}. accepted.csv written to KV store.`);

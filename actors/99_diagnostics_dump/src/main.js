@@ -139,6 +139,47 @@ Actor.main(async () => {
   const ts = nowIso();
   const runId = input.runId || data['run_meta.json']?.runId || '(unknown runId)';
 
+  // Summary warnings (limit hits, OpenAI rate limits, etc.)
+  const collectReport = data['collect_report.json'];
+  const scoringReport = data['scoring_report.json'];
+
+  const limitHitWarnings = [];
+  if (collectReport && Array.isArray(collectReport.sources)) {
+    for (const s of collectReport.sources) {
+      if (!s || s.status !== 'ok') continue;
+      const meta = s.meta || {};
+      if (meta && meta.requestedLimit != null && meta.returnedCount != null) {
+        if (meta.hitLimitLikely === true) {
+          limitHitWarnings.push(
+            `${s.id}: returned ${meta.returnedCount} which equals limit ${meta.requestedLimit} (may be capped)`
+          );
+        }
+      }
+    }
+  }
+
+  const rateLimit429 = Number(scoringReport?.openai?.rateLimit429 || 0);
+  const retryCount = Number(scoringReport?.openai?.retries || 0);
+
+  const summaryItems = [];
+  if (limitHitWarnings.length) {
+    summaryItems.push(
+      `<li><b>Hit limit likely:</b><br/>${limitHitWarnings.map(escHtml).join('<br/>')}</li>`
+    );
+  }
+  if (rateLimit429 > 0) {
+    summaryItems.push(
+      `<li><b>OpenAI rate limit (HTTP 429) seen:</b> ${rateLimit429} time(s). ` +
+      `Requests were retried with exponential backoff (retries=${retryCount}). ` +
+      `If this persists, reduce <code>scoring.concurrency</code> or request higher rate limits.</li>`
+    );
+  }
+
+  const summarySection =
+    summaryItems.length
+      ? `<h2>Summary</h2><ul>${summaryItems.join('')}</ul>`
+      : `<h2>Summary</h2><p>No warnings.</p>`;
+
   const envCheck = {
     GIST_ID: gistId ? 'set' : 'missing',
     GITHUB_TOKEN: ghToken ? 'set' : 'missing',
@@ -162,6 +203,8 @@ Actor.main(async () => {
 </head>
 <body>
   <div class="ts">Updated: ${escHtml(ts)} | Run ID: ${escHtml(runId)}</div>
+
+  ${summarySection}
 
   <h2>Diagnostics actor environment (99_diagnostics_dump only)</h2>
   <p><i>Note: OPENAI_API_KEY is checked in 03_score_jobs, not here.</i></p>

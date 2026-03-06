@@ -231,17 +231,50 @@ function coerceApifyActorInput(input) {
   return out;
 }
 
-async function runApifyActorSource(source, globalMaxItemsPerSource) {
+async function runApifyActorSource(source, globalMaxItemsPerSource, remaining) {
   const actorId = String(source.actorId);
   const inputRaw = source.input || {};
   const input = coerceApifyActorInput(inputRaw);
 
-  const maxItems = Math.min(
-    Number(source.maxItems || input.maxItems || globalMaxItemsPerSource || 200) || 200,
-    globalMaxItemsPerSource || 200
-  );
+  // Determine how many items to request from the upstream actor.
+  // We avoid "waste" by never requesting more than we plan to consume.
+  let requestedLimit =
+    Number(input.limit ?? source.limit ?? globalMaxItemsPerSource ?? 0) || 0;
 
-  log.info(`[${source.id}] Calling Apify actor ${actorId} (maxItems=${maxItems})`);
+  // If limit isn't set, fall back to the global per-source cap (or a conservative default).
+  if (!Number.isFinite(requestedLimit) || requestedLimit <= 0) {
+    requestedLimit = Number(globalMaxItemsPerSource || 200) || 200;
+  }
+
+  requestedLimit = Math.floor(requestedLimit);
+
+  // Apply global per-source cap.
+  if (Number.isFinite(globalMaxItemsPerSource) && globalMaxItemsPerSource > 0) {
+    requestedLimit = Math.min(requestedLimit, Math.floor(globalMaxItemsPerSource));
+  }
+
+  // Apply remaining cap (maxTotalItems) if provided.
+  if (Number.isFinite(remaining) && remaining > 0) {
+    requestedLimit = Math.min(requestedLimit, Math.floor(remaining));
+  }
+
+  // Apify Store actors have their own min/max constraints; enforce known mins for the Fantastic actors.
+  // (This prevents accidental "limit too small" errors.)
+  const actorLower = actorId.toLowerCase();
+  if (actorLower.includes('fantastic-jobs/career-site-job-listing-feed')) {
+    requestedLimit = Math.max(200, requestedLimit);
+  }
+  if (actorLower.includes('fantastic-jobs/advanced-linkedin-job-search-api')) {
+    requestedLimit = Math.max(10, requestedLimit);
+  }
+
+  // Cap to a reasonable max to avoid giant accidental pulls.
+  requestedLimit = Math.min(5000, requestedLimit);
+
+  // Ensure we actually pass the upstream actor a limit.
+  input.limit = requestedLimit;
+
+  log.info(`[${source.id}] Calling Apify actor ${actorId} (limit=${requestedLimit})`);
 
   const run = await Actor.call(actorId, input);
   const status = run?.status || 'UNKNOWN';
@@ -252,7 +285,7 @@ async function runApifyActorSource(source, globalMaxItemsPerSource) {
   const datasetId = run?.defaultDatasetId;
   if (!datasetId) throw new Error(`[${source.id}] Missing defaultDatasetId in Actor.call result`);
 
-  const rawItems = await listDatasetItems(datasetId, maxItems);
+  const rawItems = await listDatasetItems(datasetId, requestedLimit);
   log.info(`[${source.id}] Fetched ${rawItems.length} items from dataset ${datasetId}`);
 
   const adapter = String(source.adapter || 'generic');
@@ -262,7 +295,20 @@ async function runApifyActorSource(source, globalMaxItemsPerSource) {
     return normalizeGeneric(source.id, it);
   });
 
-  return { jobs, meta: { actorId, runId: run?.id || null, datasetId, itemCount: jobs.length } };
+  const hitLimitLikely = rawItems.length === requestedLimit;
+
+  return {
+    jobs,
+    meta: {
+      actorId,
+      runId: run?.id || null,
+      datasetId,
+      requestedLimit,
+      returnedCount: rawItems.length,
+      hitLimitLikely,
+      itemCount: jobs.length
+    }
+  };
 }
 
 async function runRapidApiJSearch(source) {
@@ -324,11 +370,11 @@ async function runRemoteOk(source) {
   return { jobs, meta: { itemCount: jobs.length } };
 }
 
-async function runSource(source, config) {
+async function runSource(source, config, remaining) {
   const globalMax = Number(config?.run?.maxItemsPerSource || 300) || 300;
   const type = String(source.type || '').toLowerCase();
 
-  if (type === 'apify_actor') return await runApifyActorSource(source, globalMax);
+  if (type === 'apify_actor') return await runApifyActorSource(source, globalMax, remaining);
   if (type === 'rapidapi_jsearch') return await runRapidApiJSearch(source);
   if (type === 'remotive') return await runRemotive(source);
   if (type === 'remoteok') return await runRemoteOk(source);
@@ -383,10 +429,11 @@ Actor.main(async () => {
 
     const started = Date.now();
     try {
-      const { jobs, meta } = await runSource(source, config);
-
       const remaining = Math.max(0, maxTotal - allJobs.length);
-      const trimmed = remaining > 0 ? jobs.slice(0, remaining) : [];
+      const { jobs, meta } = await runSource(source, config, remaining);
+
+      const remaining2 = Math.max(0, maxTotal - allJobs.length);
+      const trimmed = remaining2 > 0 ? jobs.slice(0, remaining2) : [];
       allJobs.push(...trimmed);
 
       report.sources.push({

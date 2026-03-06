@@ -32,8 +32,7 @@
         "includeAi": true,
         "includeLinkedIn": true,
         "includeJobAggregator": true,
-        "makeRecordsUnique": true,
-        "maxItems": 500
+        "makeRecordsUnique": true
       }
     },
     {
@@ -51,8 +50,7 @@
         "locationSearch": [
           "United States"
         ],
-        "descriptionType": "text",
-        "maxItems": 300
+        "descriptionType": "text"
       }
     },
     {
