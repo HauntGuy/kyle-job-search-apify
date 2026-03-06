@@ -15,8 +15,8 @@
       "actorId": "fantastic-jobs/career-site-job-listing-feed",
       "adapter": "fantastic_feed",
       "input": {
-        "titleSearch": "Unity",
-        "locationSearch": "United States",
+        "titleSearch": ["Unity"],
+        "locationSearch": ["United States"],
         "maxItems": 500,
         "descriptionType": "text",
         "includeAi": true,
@@ -33,8 +33,8 @@
       "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
       "adapter": "linkedin_generic",
       "input": {
-        "titleSearch": "Unity",
-        "locationSearch": "United States",
+        "titleSearch": ["Unity"],
+        "locationSearch": ["United States"],
         "maxItems": 300,
         "descriptionType": "text"
       }
