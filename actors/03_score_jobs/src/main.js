@@ -302,7 +302,7 @@ Actor.main(async () => {
   const mergedJobs = [];
   const pageSize = 250;
   for (let offset = 0; ; offset += pageSize) {
-    const { items } = await Actor.apifyClient.dataset(mergedDataset.getId()).listItems({ offset, limit: pageSize, clean: true });
+    const { items } = await mergedDataset.getData({ offset, limit: pageSize });
     if (!items || items.length === 0) break;
     mergedJobs.push(...items);
   }
