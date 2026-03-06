@@ -3,19 +3,9 @@
 
 import { Actor, log } from 'apify';
 
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function safeRunId(runId) {
-  if (!runId) return null;
-  return String(runId).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80);
-}
-
-function makeRunId() {
-  return new Date().toISOString().replace(/[:.]/g, '-');
-}
-
+function nowIso() { return new Date().toISOString(); }
+function safeRunId(runId) { if (!runId) return null; return String(runId).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80); }
+function makeRunId() { return new Date().toISOString().replace(/[:.]/g, '-'); }
 function datasetName(prefix, kind, runId) {
   const p = String(prefix || 'jobsearch-v3').replace(/[^a-zA-Z0-9._-]/g, '-');
   const r = safeRunId(runId) || makeRunId();
@@ -31,25 +21,15 @@ async function fetchText(url, headers = {}) {
 }
 
 async function fetchJson(url, headers = {}) {
-  const text = await fetchText(url, { ...headers, 'Accept': 'application/json' });
-  try {
-    return JSON.parse(text);
-  } catch (e) {
-    throw new Error(`Non-JSON response from ${url}: ${e?.message || e}\n${text.slice(0, 500)}`);
-  }
+  const text = await fetchText(url, { ...headers, Accept: 'application/json' });
+  try { return JSON.parse(text); }
+  catch (e) { throw new Error(`Non-JSON response from ${url}: ${e?.message || e}\n${text.slice(0, 500)}`); }
 }
 
 async function loadConfig(input) {
   if (input?.config && typeof input.config === 'object') return input.config;
-
-  const configUrl =
-    input?.configUrl ||
-    process.env.JOBSEARCH_CONFIG_URL ||
-    process.env.CONFIG_URL;
-
-  if (!configUrl) {
-    throw new Error('Missing configUrl (set in task input, or JOBSEARCH_CONFIG_URL env var).');
-  }
+  const configUrl = input?.configUrl || process.env.JOBSEARCH_CONFIG_URL || process.env.CONFIG_URL;
+  if (!configUrl) throw new Error('Missing configUrl (set in task input, or JOBSEARCH_CONFIG_URL env var).');
   return await fetchJson(configUrl);
 }
 
@@ -75,7 +55,7 @@ function firstString(...vals) {
 }
 
 function asArray(v) {
-  if (!v) return [];
+  if (v == null) return [];
   return Array.isArray(v) ? v : [v];
 }
 
@@ -83,9 +63,7 @@ function toIsoOrEmpty(v) {
   if (!v) return '';
   const s = String(v).trim();
   if (!s) return '';
-  // If it's already ISO-ish, keep it
   if (/\d{4}-\d{2}-\d{2}T/.test(s)) return s;
-  // Try Date.parse
   const ms = Date.parse(s);
   if (!Number.isFinite(ms)) return s;
   return new Date(ms).toISOString();
@@ -96,7 +74,6 @@ function canonicalizeUrl(u) {
   try {
     const url = new URL(u);
     url.hash = '';
-    // Remove common tracking params
     const dropPrefixes = ['utm_', 'fbclid', 'gclid', 'msclkid', 'ref', 'src', 'source', 'tracking', 'trk'];
     for (const [k] of Array.from(url.searchParams.entries())) {
       const lk = k.toLowerCase();
@@ -110,29 +87,11 @@ function canonicalizeUrl(u) {
 
 function normalizeGeneric(sourceId, raw) {
   const title = firstString(raw.title, raw.job_title, raw.position, raw.role, raw.jobTitle);
-  const company = firstString(
-    raw.organization,
-    raw.company,
-    raw.companyName,
-    raw.employer_name,
-    raw.employerName,
-    raw.company_name
-  );
-  const location = firstString(
-    raw.location,
-    raw.job_location,
-    raw.jobLocation,
-    raw.candidate_required_location,
-    raw.city,
-    raw.job_city,
-    raw.job_state
-  );
-
+  const company = firstString(raw.organization, raw.company, raw.companyName, raw.employer_name, raw.employerName, raw.company_name);
+  const location = firstString(raw.location, raw.job_location, raw.jobLocation, raw.candidate_required_location, raw.city, raw.job_city, raw.job_state);
   const url = firstString(raw.url, raw.job_url, raw.jobUrl, raw.link, raw.job_google_link, raw.job_apply_link);
   const applyUrl = firstString(raw.apply_url, raw.applyUrl, raw.job_apply_link, raw.application_url, raw.apply_link);
-
   const description = firstString(raw.description_text, raw.description, raw.job_description, raw.descriptionText);
-
   const postedAt = firstString(raw.job_posted_at_datetime_utc, raw.publication_date, raw.date, raw.postedAt);
 
   const out = {
@@ -145,18 +104,14 @@ function normalizeGeneric(sourceId, raw) {
     applyUrl: canonicalizeUrl(applyUrl || url),
     postedAt: toIsoOrEmpty(postedAt),
     description,
-    // Keep original raw for debugging
     raw,
   };
 
-  // Best-effort source id
   out.sourceJobId = firstString(raw.id, raw.job_id, raw.jobId, raw.guid);
-
   return out;
 }
 
 function normalizeFantasticFeed(sourceId, raw) {
-  // Fantastic feed fields are relatively stable, but still do best-effort.
   const title = firstString(raw.title);
   const company = firstString(raw.organization, raw.company, raw.company_name);
   const url = firstString(raw.url, raw.job_url);
@@ -164,6 +119,7 @@ function normalizeFantasticFeed(sourceId, raw) {
 
   const locationsDerived = asArray(raw.locations_derived).filter(Boolean);
   const locationsRaw = asArray(raw.locations_raw).filter(Boolean);
+
   const remote = !!raw.remote_derived || (typeof raw.work_arrangement_derived === 'string' && raw.work_arrangement_derived.toLowerCase().includes('remote'));
   const hybrid = !!raw.hybrid_derived || (typeof raw.work_arrangement_derived === 'string' && raw.work_arrangement_derived.toLowerCase().includes('hybrid'));
 
@@ -176,7 +132,6 @@ function normalizeFantasticFeed(sourceId, raw) {
 
   const description = firstString(raw.description_text, raw.description, raw.description_html);
   const postedAt = firstString(raw.date_posted, raw.posted_at, raw.postedAt, raw.updated_at, raw.updatedAt);
-
   const salary = firstString(raw.salary_range_derived, raw.salary_range, raw.salary);
   const employmentType = firstString(raw.employment_type_derived, raw.employment_type);
 
@@ -200,7 +155,6 @@ function normalizeFantasticFeed(sourceId, raw) {
 }
 
 function normalizeJSearch(sourceId, raw) {
-  // https://jsearch.p.rapidapi.com/search
   const title = firstString(raw.job_title, raw.title);
   const company = firstString(raw.employer_name, raw.company_name, raw.company);
   const location = firstString(raw.job_location, [raw.job_city, raw.job_state, raw.job_country].filter(Boolean).join(', '));
@@ -211,7 +165,7 @@ function normalizeJSearch(sourceId, raw) {
   const employmentType = firstString(raw.job_employment_type);
   const salary = firstString(raw.job_salary, raw.job_min_salary && raw.job_max_salary ? `${raw.job_min_salary}-${raw.job_max_salary}` : '');
 
-  const out = {
+  return {
     source: sourceId,
     fetchedAt: nowIso(),
     title,
@@ -226,7 +180,6 @@ function normalizeJSearch(sourceId, raw) {
     raw,
     sourceJobId: firstString(raw.job_id),
   };
-  return out;
 }
 
 async function listDatasetItems(datasetId, limit) {
@@ -245,20 +198,52 @@ async function listDatasetItems(datasetId, limit) {
     items.push(...batch);
     offset += batch.length;
   }
+
   return items;
+}
+
+function coerceApifyActorInput(input) {
+  const out = { ...(input || {}) };
+
+  // Coerce to arrays if strings are provided
+  for (const k of ['titleSearch', 'locationSearch', 'aiWorkArrangementFilter']) {
+    if (!(k in out)) continue;
+
+    const v = out[k];
+    if (typeof v === 'string') {
+      const s = v.trim();
+      if (k === 'aiWorkArrangementFilter' && s.toLowerCase() === 'all') {
+        // Treat "All" as "no filter"
+        delete out[k];
+      } else {
+        out[k] = [s];
+      }
+    } else if (Array.isArray(v)) {
+      // ok
+    } else if (v == null) {
+      delete out[k];
+    } else {
+      // Any other type: wrap
+      out[k] = [v];
+    }
+  }
+
+  return out;
 }
 
 async function runApifyActorSource(source, globalMaxItemsPerSource) {
   const actorId = String(source.actorId);
-  const input = source.input || {};
+  const inputRaw = source.input || {};
+  const input = coerceApifyActorInput(inputRaw);
+
   const maxItems = Math.min(
     Number(source.maxItems || input.maxItems || globalMaxItemsPerSource || 200) || 200,
     globalMaxItemsPerSource || 200
   );
 
   log.info(`[${source.id}] Calling Apify actor ${actorId} (maxItems=${maxItems})`);
-  const run = await Actor.call(actorId, input);
 
+  const run = await Actor.call(actorId, input);
   const status = run?.status || 'UNKNOWN';
   if (status !== 'SUCCEEDED') {
     throw new Error(`[${source.id}] Called actor did not succeed (status=${status}, runId=${run?.id || 'unknown'})`);
@@ -308,7 +293,6 @@ async function runRapidApiJSearch(source) {
 
   const items = Array.isArray(json?.data) ? json.data : [];
   const jobs = items.map((it) => normalizeJSearch(source.id, it));
-
   return { jobs, meta: { itemCount: jobs.length } };
 }
 
@@ -318,7 +302,6 @@ async function runRemotive(source) {
 
   const params = new URLSearchParams();
   if (q) params.set('search', q);
-  // Remotive supports "limit" in practice, but if it doesn't, we just slice.
   params.set('limit', String(limit));
 
   const url = `https://remotive.com/api/remote-jobs?${params.toString()}`;
@@ -326,7 +309,6 @@ async function runRemotive(source) {
 
   const json = await fetchJson(url);
   const items = Array.isArray(json?.jobs) ? json.jobs : [];
-
   const jobs = items.slice(0, limit).map((it) => normalizeGeneric(source.id, it));
   return { jobs, meta: { itemCount: jobs.length } };
 }
@@ -335,20 +317,15 @@ async function runRemoteOk(source) {
   const url = 'https://remoteok.com/api';
   log.info(`[${source.id}] GET ${url}`);
 
-  // RemoteOK asks for a user agent; some setups may block otherwise.
   const json = await fetchJson(url, { 'User-Agent': 'Mozilla/5.0 (jobsearch-bot)' });
-
   const items = Array.isArray(json) ? json : [];
-  // First element is usually metadata; job items have "position"
   const jobItems = items.filter((it) => it && typeof it === 'object' && (it.position || it.company));
-
   const jobs = jobItems.map((it) => normalizeGeneric(source.id, it));
   return { jobs, meta: { itemCount: jobs.length } };
 }
 
 async function runSource(source, config) {
   const globalMax = Number(config?.run?.maxItemsPerSource || 300) || 300;
-
   const type = String(source.type || '').toLowerCase();
 
   if (type === 'apify_actor') return await runApifyActorSource(source, globalMax);
@@ -386,9 +363,7 @@ Actor.main(async () => {
   const sources = Array.isArray(config?.sources) ? config.sources : [];
   const maxTotal = Number(config?.run?.maxTotalItems || 1200) || 1200;
 
-  // Collect sequentially for simplicity; each source may have its own rate limits.
   const allJobs = [];
-
   for (const src of sources) {
     const source = { ...src };
     if (!source.id) source.id = source.actorId || source.type || 'source';
@@ -410,10 +385,8 @@ Actor.main(async () => {
     try {
       const { jobs, meta } = await runSource(source, config);
 
-      // Enforce maxTotal across all sources
       const remaining = Math.max(0, maxTotal - allJobs.length);
       const trimmed = remaining > 0 ? jobs.slice(0, remaining) : [];
-
       allJobs.push(...trimmed);
 
       report.sources.push({
@@ -441,12 +414,8 @@ Actor.main(async () => {
         error: String(err?.message || err),
       });
       report.totals.errors += 1;
-
       log.error(`[${source.id}] Source failed: ${err?.stack || err}`);
-
-      if (config?.run?.stopOnCollectorErrors) {
-        throw err;
-      }
+      if (config?.run?.stopOnCollectorErrors) throw err;
     }
   }
 
@@ -458,13 +427,12 @@ Actor.main(async () => {
     await rawDataset.pushData(batch);
     pushed += batch.length;
   }
-  report.totals.pushed = pushed;
 
+  report.totals.pushed = pushed;
   const finishedAt = nowIso();
   report.finishedAt = finishedAt;
   report.durationSecs = Math.round((Date.parse(finishedAt) - Date.parse(startedAt)) / 1000);
 
-  // Store dataset info + report
   const datasetInfo = { id: rawDataset.getId?.() || null, name: rawDatasetName, itemCount: pushed };
   await kv.setValue('raw_dataset.json', datasetInfo);
   await kv.setValue('collect_report.json', report);
