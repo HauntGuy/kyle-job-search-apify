@@ -15,15 +15,25 @@
       "actorId": "fantastic-jobs/career-site-job-listing-feed",
       "adapter": "fantastic_feed",
       "input": {
-        "titleSearch": ["Unity"],
-        "locationSearch": ["United States"],
-        "maxItems": 500,
+        "limit": 500,
+        "titleSearch": [
+          "Unity"
+        ],
+        "locationSearch": [
+          "United States"
+        ],
+        "aiWorkArrangementFilter": [
+          "Remote OK",
+          "Remote Solely",
+          "Hybrid",
+          "On-site"
+        ],
         "descriptionType": "text",
         "includeAi": true,
         "includeLinkedIn": true,
         "includeJobAggregator": true,
-        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
-        "makeRecordsUnique": true
+        "makeRecordsUnique": true,
+        "maxItems": 500
       }
     },
     {
@@ -33,10 +43,16 @@
       "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
       "adapter": "linkedin_generic",
       "input": {
-        "titleSearch": ["Unity"],
-        "locationSearch": ["United States"],
-        "maxItems": 300,
-        "descriptionType": "text"
+        "timeRange": "7d",
+        "limit": 300,
+        "titleSearch": [
+          "Unity"
+        ],
+        "locationSearch": [
+          "United States"
+        ],
+        "descriptionType": "text",
+        "maxItems": 300
       }
     },
     {
@@ -55,7 +71,9 @@
       "id": "rapidapi_jsearch",
       "type": "rapidapi_jsearch",
       "enabled": false,
-      "requiredEnv": ["RAPIDAPI_KEY"],
+      "requiredEnv": [
+        "RAPIDAPI_KEY"
+      ],
       "query": "unity developer in united states",
       "page": 1,
       "num_pages": 1,
@@ -70,13 +88,13 @@
     "model": "gpt-4o-mini",
     "threshold": 70,
     "gateOnLocation": false,
-    "concurrency": 4,
+    "concurrency": 8,
     "maxDescriptionChars": 12000,
     "rubricUrl": "http://forgaard.com/jobsearch/rubric.md"
   },
   "notify": {
     "enabled": true,
-    "toEmail": "randy@forgaard.com",
+    "toEmail": "you@example.com",
     "subjectPrefix": "[Kyle Job Search]",
     "sendEvenIfEmpty": true
   },
