@@ -92,7 +92,7 @@ Actor.main(async () => {
   const attachments = [
     {
       filename: 'accepted.csv',
-      data: b64(acceptedCsv || 'score,company,title\n'),
+      data: b64(acceptedCsv || 'Company,Job Title,Salary,Where,Score,Age (days),Where Found,Sources,Reason,Tags,Red Flags\n'),
     },
   ];
 

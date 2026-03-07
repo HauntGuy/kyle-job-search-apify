@@ -117,10 +117,20 @@ function mergeTwo(a, b, preferLinkedInApply) {
   // Fill blanks
   merged.title = merged.title || b.title || '';
   merged.company = merged.company || b.company || '';
+  merged.companyUrl = merged.companyUrl || b.companyUrl || '';
   merged.location = merged.location || b.location || '';
   merged.postedAt = merged.postedAt || b.postedAt || '';
   merged.salary = merged.salary || b.salary || '';
   merged.employmentType = merged.employmentType || b.employmentType || '';
+
+  // Track the earliest postedAt across all merged sources (for "Age (days)")
+  const aPosted = a.earliestPostedAt || a.postedAt || '';
+  const bPosted = b.earliestPostedAt || b.postedAt || '';
+  if (aPosted && bPosted) {
+    merged.earliestPostedAt = aPosted < bPosted ? aPosted : bPosted;
+  } else {
+    merged.earliestPostedAt = aPosted || bPosted || '';
+  }
 
   // Preserve raw examples (keep only one or two)
   merged.rawExamples = merged.rawExamples || [];
@@ -180,6 +190,7 @@ Actor.main(async () => {
           sources: [job.source].filter(Boolean),
           urls: [job.url].filter(Boolean),
           applyUrls: [job.applyUrl].filter(Boolean),
+          earliestPostedAt: job.postedAt || '',
           mergedAt: nowIso(),
         };
         seen.set(key, base);

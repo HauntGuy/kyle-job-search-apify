@@ -11,6 +11,7 @@ Return a JSON object with:
 - `reasons` (array of short bullets)
 - `red_flags` (array of short bullets)
 - `tags` (array of short tags)
+- `salary_extracted` (string: salary/compensation info if found anywhere in the posting, e.g. "$90k-$120k" or "Competitive + equity"; empty string if none found)
 
 ## Candidate summary
 

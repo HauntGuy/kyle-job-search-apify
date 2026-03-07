@@ -259,6 +259,89 @@ function joinSources(sources) {
   return arr.filter(Boolean).join(';');
 }
 
+// --------------- CSV helpers for Google Sheets HYPERLINK format ---------------
+
+function friendlySourceName(sourceId) {
+  const map = {
+    'fantastic_feed': 'Fantastic',
+    'linkedin_jobs': 'LinkedIn',
+    'remotive': 'Remotive',
+    'remoteok': 'RemoteOK',
+    'rapidapi_jsearch': 'JSearch',
+  };
+  return map[sourceId] || sourceId || '';
+}
+
+function extractRootDomainUrl(urlStr) {
+  if (!urlStr) return '';
+  try {
+    const u = new URL(urlStr.startsWith('http') ? urlStr : `https://${urlStr}`);
+    return `${u.protocol}//${u.hostname}`;
+  } catch {
+    return '';
+  }
+}
+
+function friendlyDomainName(urlStr, fallbackCompany) {
+  if (!urlStr) return fallbackCompany || '';
+  try {
+    const hostname = new URL(urlStr.startsWith('http') ? urlStr : `https://${urlStr}`).hostname.toLowerCase();
+    // Known ATS / job-board platforms
+    if (hostname.includes('lever.co')) return 'Lever';
+    if (hostname.includes('ashbyhq.com')) return 'Ashby';
+    if (hostname.includes('greenhouse.io')) return 'Greenhouse';
+    if (hostname.includes('workday.com') || hostname.includes('myworkday.com')) return 'Workday';
+    if (hostname.includes('indeed.com')) return 'Indeed';
+    if (hostname.includes('linkedin.com')) return 'LinkedIn';
+    if (hostname.includes('glassdoor.com')) return 'Glassdoor';
+    if (hostname.includes('smartrecruiters.com')) return 'SmartRecruiters';
+    if (hostname.includes('breezy.hr')) return 'Breezy HR';
+    if (hostname.includes('recruitee.com')) return 'Recruitee';
+    if (hostname.includes('bamboohr.com')) return 'BambooHR';
+    if (hostname.includes('icims.com')) return 'iCIMS';
+    if (hostname.includes('ultipro.com') || hostname.includes('ukg.com')) return 'UKG';
+    if (hostname.includes('jobvite.com')) return 'Jobvite';
+    if (hostname.includes('taleo.net')) return 'Taleo';
+    if (hostname.includes('successfactors.com')) return 'SuccessFactors';
+    if (hostname.includes('applytojob.com')) return 'ApplyToJob';
+    if (hostname.includes('ziprecruiter.com')) return 'ZipRecruiter';
+    if (hostname.includes('remotive.com')) return 'Remotive';
+    if (hostname.includes('remoteok.com')) return 'RemoteOK';
+    if (hostname.includes('dice.com')) return 'Dice';
+    if (hostname.includes('angel.co') || hostname.includes('wellfound.com')) return 'Wellfound';
+    if (hostname.includes('ycombinator.com')) return 'Y Combinator';
+    // Fallback: strip common prefixes + TLD, capitalize
+    let name = hostname.replace(/^(www\.|jobs\.|careers\.|apply\.|career\.)/, '');
+    name = name.replace(/\.(com|org|net|io|co|gg|dev|us|gov)$/, '');
+    if (name) return name.charAt(0).toUpperCase() + name.slice(1);
+    return fallbackCompany || '';
+  } catch {
+    return fallbackCompany || '';
+  }
+}
+
+function calculateAgeDays(postedAt) {
+  if (!postedAt) return '';
+  try {
+    const posted = new Date(postedAt);
+    if (isNaN(posted.getTime())) return '';
+    const diffMs = Date.now() - posted.getTime();
+    return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+  } catch {
+    return '';
+  }
+}
+
+function hyperlinkFormula(url, text) {
+  const safeText = String(text || '').trim();
+  if (!url) return safeText;
+  let safeUrl = String(url).trim();
+  if (!safeUrl) return safeText;
+  // Ensure URL has protocol
+  if (!/^https?:\/\//i.test(safeUrl)) safeUrl = `https://${safeUrl}`;
+  return `=HYPERLINK("${safeUrl}","${safeText || safeUrl}")`;
+}
+
 Actor.main(async () => {
   const input = (await Actor.getInput()) || {};
   const config = await loadConfig(input);
@@ -337,7 +420,7 @@ Actor.main(async () => {
         content:
           rubricText +
           '\n\n' +
-          'Return ONLY valid JSON, no markdown. Ensure fields: accept, score, confidence, location_ok, reason_short, reasons, red_flags, tags.',
+          'Return ONLY valid JSON, no markdown. Ensure fields: accept, score, confidence, location_ok, reason_short, reasons, red_flags, tags, salary_extracted.',
       },
       {
         role: 'user',
@@ -414,41 +497,69 @@ Actor.main(async () => {
     }
   }
 
-  // Build accepted.csv (Google Sheets-friendly)
+  // Build accepted.csv (Google Sheets HYPERLINK format)
   const header = [
-    'score',
-    'company',
-    'title',
-    'location',
-    'sources',
-    'apply_link',
-    'apply_url',
-    'job_link',
-    'job_url',
-    'posted_at',
-    'reason_short',
-    'tags',
-    'red_flags'
+    'Company',
+    'Job Title',
+    'Salary',
+    'Where',
+    'Score',
+    'Age (days)',
+    'Where Found',
+    'Sources',
+    'Reason',
+    'Tags',
+    'Red Flags'
   ];
 
   const linesCsv = [header.map(csvEscape).join(',')];
   for (const j of acceptedJobs) {
     const ev = j.evaluation || {};
-    const tags = Array.isArray(ev.tags) ? ev.tags.join(';') : '';
-    const redFlags = Array.isArray(ev.red_flags) ? ev.red_flags.join(';') : '';
+    const tags = Array.isArray(ev.tags) ? ev.tags.join('; ') : '';
+    const redFlags = Array.isArray(ev.red_flags) ? ev.red_flags.join('; ') : '';
+
+    // Company: clickable link to company homepage
+    const companyCell = hyperlinkFormula(j.companyUrl, j.company || '');
+
+    // Job Title: clickable link to job (LinkedIn URL preferred via merge step)
+    const jobUrl = j.applyUrl || j.url || '';
+    const jobTitleCell = hyperlinkFormula(jobUrl, j.title || '');
+
+    // Salary: structured data first, then LLM-extracted fallback
+    const salary = j.salary || ev.salary_extracted || '';
+
+    // Where: location
+    const where = j.location || '';
+
+    // Score
+    const score = ev.score ?? 0;
+
+    // Age (days): days since earliest posting date
+    const ageDays = calculateAgeDays(j.earliestPostedAt || j.postedAt);
+
+    // Where Found: root domain of the job listing URL, with friendly name
+    const foundUrl = j.url || j.applyUrl || '';
+    const rootUrl = extractRootDomainUrl(foundUrl);
+    const foundName = friendlyDomainName(foundUrl, j.company);
+    const whereFoundCell = hyperlinkFormula(rootUrl, foundName);
+
+    // Sources: friendly names of job feeds that found this job
+    const sourcesArr = Array.isArray(j.sources) ? j.sources : [j.source].filter(Boolean);
+    const sourcesStr = sourcesArr.map(friendlySourceName).filter(Boolean).join(', ');
+
+    // Reason, Tags, Red Flags
+    const reason = ev.reason_short || '';
 
     const row = [
-      ev.score ?? 0,
-      j.company || '',
-      j.title || '',
-      j.location || '',
-      joinSources(j.sources),
-      j.applyUrl || j.url || '',
-      j.applyUrl || '',
-      j.url || '',
-      j.url || '',
-      j.postedAt || '',
-      ev.reason_short || '',
+      companyCell,
+      jobTitleCell,
+      salary,
+      where,
+      score,
+      ageDays,
+      whereFoundCell,
+      sourcesStr,
+      reason,
       tags,
       redFlags,
     ];

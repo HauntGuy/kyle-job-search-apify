@@ -93,17 +93,21 @@ function normalizeGeneric(sourceId, raw) {
   const applyUrl = firstString(raw.apply_url, raw.applyUrl, raw.job_apply_link, raw.application_url, raw.apply_link);
   const description = firstString(raw.description_text, raw.description, raw.job_description, raw.descriptionText);
   const postedAt = firstString(raw.job_posted_at_datetime_utc, raw.publication_date, raw.date, raw.postedAt);
+  const companyUrl = firstString(raw.company_url, raw.companyUrl, raw.employer_website, raw.organization_url, raw.company_website);
+  const salary = firstString(raw.salary, raw.salary_range, raw.compensation);
 
   const out = {
     source: sourceId,
     fetchedAt: nowIso(),
     title,
     company,
+    companyUrl: canonicalizeUrl(companyUrl),
     location,
     url: canonicalizeUrl(url),
     applyUrl: canonicalizeUrl(applyUrl || url),
     postedAt: toIsoOrEmpty(postedAt),
     description,
+    salary,
     raw,
   };
 
@@ -116,6 +120,7 @@ function normalizeFantasticFeed(sourceId, raw) {
   const company = firstString(raw.organization, raw.company, raw.company_name);
   const url = firstString(raw.url, raw.job_url);
   const applyUrl = firstString(raw.apply_url, raw.applyUrl, raw.apply_link, raw.application_url, url);
+  const companyUrl = firstString(raw.organization_url, raw.company_url, raw.company_website, raw.employer_website);
 
   const locationsDerived = asArray(raw.locations_derived).filter(Boolean);
   const locationsRaw = asArray(raw.locations_raw).filter(Boolean);
@@ -140,6 +145,7 @@ function normalizeFantasticFeed(sourceId, raw) {
     fetchedAt: nowIso(),
     title,
     company,
+    companyUrl: canonicalizeUrl(companyUrl),
     location: locParts.filter(Boolean).join(' | '),
     url: canonicalizeUrl(url),
     applyUrl: canonicalizeUrl(applyUrl),
@@ -164,12 +170,14 @@ function normalizeJSearch(sourceId, raw) {
   const description = firstString(raw.job_description);
   const employmentType = firstString(raw.job_employment_type);
   const salary = firstString(raw.job_salary, raw.job_min_salary && raw.job_max_salary ? `${raw.job_min_salary}-${raw.job_max_salary}` : '');
+  const companyUrl = firstString(raw.employer_website, raw.employer_company_url, raw.company_url);
 
   return {
     source: sourceId,
     fetchedAt: nowIso(),
     title,
     company,
+    companyUrl: canonicalizeUrl(companyUrl),
     location,
     url: canonicalizeUrl(url),
     applyUrl: canonicalizeUrl(applyUrl),
