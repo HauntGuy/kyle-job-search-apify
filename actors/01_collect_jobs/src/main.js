@@ -390,6 +390,55 @@ async function runSource(source, config, remaining) {
   throw new Error(`[${source.id}] Unknown source.type=${source.type}`);
 }
 
+// --------------- collected.csv helpers ---------------
+
+function csvEscape(value) {
+  const s = (value ?? '').toString();
+  const needs = /[",\n]/.test(s);
+  const out = s.replace(/"/g, '""');
+  return needs ? `"${out}"` : out;
+}
+
+function collectedFriendlySource(sourceId) {
+  const map = {
+    'fantastic_feed': 'Fantastic',
+    'linkedin_jobs': 'LinkedIn',
+    'remotive': 'Remotive',
+    'remoteok': 'RemoteOK',
+    'rapidapi_jsearch': 'JSearch',
+  };
+  return map[sourceId] || sourceId || '';
+}
+
+function collectedHyperlink(url, text) {
+  const safeText = String(text || '').trim();
+  if (!url) return safeText;
+  let safeUrl = String(url).trim();
+  if (!safeUrl) return safeText;
+  if (!/^https?:\/\//i.test(safeUrl)) safeUrl = `https://${safeUrl}`;
+  return `=HYPERLINK("${safeUrl}","${safeText || safeUrl}")`;
+}
+
+function buildCollectedCsv(jobs) {
+  const header = ['Source', 'Company', 'Job Title', 'Location', 'Salary', 'Posted At', 'URL'];
+  const lines = [header.map(csvEscape).join(',')];
+
+  for (const j of jobs) {
+    const row = [
+      collectedFriendlySource(j.source),
+      j.company || '',
+      collectedHyperlink(j.applyUrl || j.url, j.title || ''),
+      j.location || '',
+      j.salary || '',
+      j.postedAt || '',
+      j.url || j.applyUrl || '',
+    ];
+    lines.push(row.map(csvEscape).join(','));
+  }
+
+  return lines.join('\n') + '\n';
+}
+
 Actor.main(async () => {
   const input = (await Actor.getInput()) || {};
   const config = await loadConfig(input);
@@ -492,5 +541,9 @@ Actor.main(async () => {
   await kv.setValue('raw_dataset.json', datasetInfo);
   await kv.setValue('collect_report.json', report);
 
-  log.info(`Collection complete. Pushed ${pushed} jobs to dataset ${rawDatasetName}`);
+  // Build collected.csv for debugging (all raw jobs before merge/dedup)
+  const collectedCsv = buildCollectedCsv(allJobs);
+  await kv.setValue('collected.csv', collectedCsv, { contentType: 'text/csv; charset=utf-8' });
+
+  log.info(`Collection complete. Pushed ${pushed} jobs to dataset ${rawDatasetName}. collected.csv written to KV store.`);
 });

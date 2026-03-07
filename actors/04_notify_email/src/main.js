@@ -56,6 +56,8 @@ Actor.main(async () => {
   const kv = await Actor.openKeyValueStore(kvStoreName);
 
   const acceptedCsv = await kv.getValue('accepted.csv');
+  const scoredCsv = await kv.getValue('scored.csv');
+  const collectedCsv = await kv.getValue('collected.csv');
   const scoringReport = await kv.getValue('scoring_report.json');
 
   const toEmail = String(notifyCfg.toEmail || '').trim();
@@ -82,17 +84,28 @@ Actor.main(async () => {
       <p><b>Accepted:</b> ${acceptedCount}<br/>
          <b>Scored:</b> ${totalScored}</p>
       ${diagnosticsUrl ? `<p>Diagnostics: <a href="${diagnosticsUrl}">${diagnosticsUrl}</a></p>` : ''}
-      <p>See attached <code>accepted.csv</code>.</p>
+      <p>See attached CSVs: <code>accepted.csv</code> (top picks), <code>scored.csv</code> (all scored jobs), <code>collected.csv</code> (raw collected).</p>
       <hr/>
       <p style="color:#666;font-size:12px;">Sent at ${nowIso()}</p>
     </div>
   `.trim();
 
   // apify/send-mail expects base64 data for attachments
+  const emptyHeader = 'Company,Job Title,Salary,Where,Score,Age (days),Where Found,Sources,Reason,Tags,Red Flags\n';
+  const emptyCollectedHeader = 'Source,Company,Job Title,Location,Salary,Posted At,URL\n';
+
   const attachments = [
     {
       filename: 'accepted.csv',
-      data: b64(acceptedCsv || 'Company,Job Title,Salary,Where,Score,Age (days),Where Found,Sources,Reason,Tags,Red Flags\n'),
+      data: b64(acceptedCsv || emptyHeader),
+    },
+    {
+      filename: 'scored.csv',
+      data: b64(scoredCsv || emptyHeader),
+    },
+    {
+      filename: 'collected.csv',
+      data: b64(collectedCsv || emptyCollectedHeader),
     },
   ];
 

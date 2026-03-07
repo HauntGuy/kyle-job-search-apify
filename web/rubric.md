@@ -12,6 +12,7 @@ Return a JSON object with:
 - `red_flags` (array of short bullets)
 - `tags` (array of short tags)
 - `salary_extracted` (string: salary/compensation info if found anywhere in the posting, e.g. "$90k-$120k" or "Competitive + equity"; empty string if none found)
+- `company_url` (string: the company's homepage URL if found anywhere in the posting, e.g. "https://example.com"; empty string if not found)
 
 ## Candidate summary
 
