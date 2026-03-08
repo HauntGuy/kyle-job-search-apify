@@ -394,6 +394,10 @@ async function runSource(source, config, remaining) {
 // --------------- collected.xlsx helpers ---------------
 
 function collectedFriendlySource(sourceId) {
+  if (!sourceId) return '';
+  const s = String(sourceId);
+  if (s.startsWith('fantastic_')) return 'Fantastic';
+  if (s.startsWith('linkedin_')) return 'LinkedIn';
   const map = {
     'fantastic_feed': 'Fantastic',
     'linkedin_jobs': 'LinkedIn',
@@ -401,7 +405,7 @@ function collectedFriendlySource(sourceId) {
     'remoteok': 'RemoteOK',
     'rapidapi_jsearch': 'JSearch',
   };
-  return map[sourceId] || sourceId || '';
+  return map[s] || s;
 }
 
 function ensureProtocol(url) {
@@ -428,13 +432,14 @@ async function buildCollectedXlsx(jobs) {
   const ws = workbook.addWorksheet('Collected');
 
   ws.columns = [
-    { header: 'Source',    width: 14 },
-    { header: 'Company',   width: 26 },
-    { header: 'Job Title', width: 46 },
-    { header: 'Location',  width: 36 },
-    { header: 'Salary',    width: 22 },
-    { header: 'Posted At', width: 22 },
-    { header: 'URL',       width: 50 },
+    { header: 'Source',       width: 14 },
+    { header: 'Company',      width: 26 },
+    { header: 'Job Title',    width: 46 },
+    { header: 'Location',     width: 36 },
+    { header: 'Salary',       width: 22 },
+    { header: 'Posted At',    width: 22 },
+    { header: 'URL',          width: 50 },
+    { header: 'Search Terms', width: 40 },
   ];
 
   // Bold header row
@@ -452,6 +457,7 @@ async function buildCollectedXlsx(jobs) {
       j.salary || '',
       j.postedAt || '',
       j.url || j.applyUrl || '',
+      (j.searchTerms || []).join('; '),
     ]);
 
     // Job Title hyperlink
@@ -514,6 +520,13 @@ Actor.main(async () => {
 
       const remaining2 = Math.max(0, maxTotal - allJobs.length);
       const trimmed = remaining2 > 0 ? jobs.slice(0, remaining2) : [];
+
+      // Stamp searchTerms from the source config so downstream actors can track provenance
+      const searchTerms = source.input?.titleSearch || [];
+      for (const job of trimmed) {
+        job.searchTerms = searchTerms;
+      }
+
       allJobs.push(...trimmed);
 
       report.sources.push({

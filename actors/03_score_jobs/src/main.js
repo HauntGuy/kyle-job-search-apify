@@ -251,6 +251,10 @@ function truncate(s, maxChars) {
 // --------------- XLSX helpers ---------------
 
 function friendlySourceName(sourceId) {
+  if (!sourceId) return '';
+  const s = String(sourceId);
+  if (s.startsWith('fantastic_')) return 'Fantastic';
+  if (s.startsWith('linkedin_')) return 'LinkedIn';
   const map = {
     'fantastic_feed': 'Fantastic',
     'linkedin_jobs': 'LinkedIn',
@@ -258,7 +262,7 @@ function friendlySourceName(sourceId) {
     'remoteok': 'RemoteOK',
     'rapidapi_jsearch': 'JSearch',
   };
-  return map[sourceId] || sourceId || '';
+  return map[s] || s;
 }
 
 function extractRootDomainUrl(urlStr) {
@@ -371,17 +375,18 @@ function setCellHyperlink(cell, url, text) {
 }
 
 // Build an XLSX workbook buffer from an array of scored jobs
-async function buildScoredXlsx(jobs) {
+async function buildScoredXlsx(jobs, { includeSearchTerms = false } = {}) {
   const workbook = new ExcelJS.Workbook();
   const ws = workbook.addWorksheet('Jobs');
 
   // Define columns with widths
-  ws.columns = [
+  const columns = [
     { header: 'Company',      width: 26 },
     { header: 'Job Title',    width: 46 },
     { header: 'Salary',       width: 26 },
     { header: 'Where',        width: 36 },
     { header: 'Score',        width: 8  },
+    { header: 'Role',         width: 22 },
     { header: 'Age (days)',   width: 11 },
     { header: 'Where Found',  width: 19 },
     { header: 'Sources',      width: 19 },
@@ -389,6 +394,12 @@ async function buildScoredXlsx(jobs) {
     { header: 'Tags',         width: 36 },
     { header: 'Red Flags',    width: 42 },
   ];
+
+  if (includeSearchTerms) {
+    columns.push({ header: 'Search Terms', width: 40 });
+  }
+
+  ws.columns = columns;
 
   // Bold header row
   const headerRow = ws.getRow(1);
@@ -401,6 +412,7 @@ async function buildScoredXlsx(jobs) {
     const ev = j.evaluation || {};
     const tags = Array.isArray(ev.tags) ? ev.tags.join('; ') : '';
     const redFlags = Array.isArray(ev.red_flags) ? ev.red_flags.join(' ') : '';
+    const roleStr = Array.isArray(ev.role) ? ev.role.join(', ') : (ev.role || '');
 
     const salary = formatSalary(j.salary || ev.salary_extracted || '');
     const where = j.location || '';
@@ -410,19 +422,26 @@ async function buildScoredXlsx(jobs) {
     const sourcesStr = sourcesArr.map(friendlySourceName).filter(Boolean).join(', ');
     const reason = ev.reason_short || '';
 
-    const row = ws.addRow([
+    const rowData = [
       j.company || '',                     // 1: Company (will become hyperlink)
       j.title || '',                       // 2: Job Title (will become hyperlink)
       salary,                              // 3: Salary
       where,                               // 4: Where
       score,                               // 5: Score
-      ageDays === '' ? '' : ageDays,       // 6: Age (days)
-      '',                                  // 7: Where Found (will become hyperlink)
-      sourcesStr,                          // 8: Sources
-      reason,                              // 9: Reason
-      tags,                                // 10: Tags
-      redFlags,                            // 11: Red Flags
-    ]);
+      roleStr,                             // 6: Role
+      ageDays === '' ? '' : ageDays,       // 7: Age (days)
+      '',                                  // 8: Where Found (will become hyperlink)
+      sourcesStr,                          // 9: Sources
+      reason,                              // 10: Reason
+      tags,                                // 11: Tags
+      redFlags,                            // 12: Red Flags
+    ];
+
+    if (includeSearchTerms) {
+      rowData.push((j.searchTerms || []).join('; '));  // 13: Search Terms
+    }
+
+    const row = ws.addRow(rowData);
 
     // Company hyperlink
     const companyUrl = j.companyUrl || ev.company_url || '';
@@ -436,7 +455,7 @@ async function buildScoredXlsx(jobs) {
     const foundUrl = j.url || j.applyUrl || '';
     const rootUrl = extractRootDomainUrl(foundUrl);
     const foundName = friendlyDomainName(foundUrl, j.company);
-    setCellHyperlink(row.getCell(7), rootUrl, foundName);
+    setCellHyperlink(row.getCell(8), rootUrl, foundName);
   }
 
   return await workbook.xlsx.writeBuffer();
@@ -520,7 +539,7 @@ Actor.main(async () => {
         content:
           rubricText +
           '\n\n' +
-          'Return ONLY valid JSON, no markdown. Ensure fields: accept, score, confidence, location_ok, reason_short, reasons, red_flags, tags, salary_extracted, company_url.',
+          'Return ONLY valid JSON, no markdown. Ensure fields: accept, score, confidence, location_ok, reason_short, reasons, red_flags, tags, salary_extracted, company_url, role.',
       },
       {
         role: 'user',
@@ -606,7 +625,7 @@ Actor.main(async () => {
   // scored.xlsx contains ALL scored jobs (accepted + rejected) for review
   // Sort by score descending so best matches appear first
   const allSorted = [...results].sort((a, b) => (b.evaluation?.score ?? 0) - (a.evaluation?.score ?? 0));
-  const scoredXlsx = await buildScoredXlsx(allSorted);
+  const scoredXlsx = await buildScoredXlsx(allSorted, { includeSearchTerms: true });
   await kv.setValue('scored.xlsx', scoredXlsx, { contentType: xlsxContentType });
 
   const finishedAt = nowIso();

@@ -145,6 +145,10 @@ function mergeTwo(a, b, preferLinkedInApply) {
   // Prefer the "best" url field too
   merged.url = merged.url || merged.applyUrl || merged.urls[0] || '';
 
+  // Union searchTerms
+  const searchTerms = new Set([...(a.searchTerms || []), ...(b.searchTerms || [])]);
+  merged.searchTerms = Array.from(searchTerms);
+
   // Prefer longer description
   const descA = a.description || '';
   const descB = b.description || '';
@@ -249,6 +253,7 @@ Actor.main(async () => {
           sources: [job.source].filter(Boolean),
           urls: [job.url].filter(Boolean),
           applyUrls: [job.applyUrl].filter(Boolean),
+          searchTerms: job.searchTerms || [],
           earliestPostedAt: job.postedAt || '',
           mergedAt: nowIso(),
         };

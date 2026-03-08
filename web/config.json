@@ -113,6 +113,114 @@
       }
     },
     {
+      "id": "fantastic_sales_engineer",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/career-site-job-listing-feed",
+      "adapter": "fantastic_feed",
+      "input": {
+        "limit": 300,
+        "titleSearch": ["Sales Engineer"],
+        "locationSearch": ["Massachusetts"],
+        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
+        "descriptionType": "text",
+        "includeAi": true,
+        "includeLinkedIn": true,
+        "includeJobAggregator": true,
+        "makeRecordsUnique": true
+      }
+    },
+    {
+      "id": "fantastic_client_success",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/career-site-job-listing-feed",
+      "adapter": "fantastic_feed",
+      "input": {
+        "limit": 300,
+        "titleSearch": ["Client Success"],
+        "locationSearch": ["Massachusetts"],
+        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
+        "descriptionType": "text",
+        "includeAi": true,
+        "includeLinkedIn": true,
+        "includeJobAggregator": true,
+        "makeRecordsUnique": true
+      }
+    },
+    {
+      "id": "fantastic_impl_manager",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/career-site-job-listing-feed",
+      "adapter": "fantastic_feed",
+      "input": {
+        "limit": 300,
+        "titleSearch": ["Implementation Manager"],
+        "locationSearch": ["Massachusetts"],
+        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
+        "descriptionType": "text",
+        "includeAi": true,
+        "includeLinkedIn": true,
+        "includeJobAggregator": true,
+        "makeRecordsUnique": true
+      }
+    },
+    {
+      "id": "fantastic_support",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/career-site-job-listing-feed",
+      "adapter": "fantastic_feed",
+      "input": {
+        "limit": 300,
+        "titleSearch": ["Technical Support Engineer", "Support Engineer", "Product Support Engineer", "Application Support"],
+        "locationSearch": ["Massachusetts"],
+        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
+        "descriptionType": "text",
+        "includeAi": true,
+        "includeLinkedIn": true,
+        "includeJobAggregator": true,
+        "makeRecordsUnique": true
+      }
+    },
+    {
+      "id": "fantastic_solutions",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/career-site-job-listing-feed",
+      "adapter": "fantastic_feed",
+      "input": {
+        "limit": 300,
+        "titleSearch": ["Solutions Engineer", "Solutions Consultant", "Technical Solutions"],
+        "locationSearch": ["Massachusetts"],
+        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
+        "descriptionType": "text",
+        "includeAi": true,
+        "includeLinkedIn": true,
+        "includeJobAggregator": true,
+        "makeRecordsUnique": true
+      }
+    },
+    {
+      "id": "fantastic_gamedev",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/career-site-job-listing-feed",
+      "adapter": "fantastic_feed",
+      "input": {
+        "limit": 300,
+        "titleSearch": ["Game Developer", "Game Programmer", "Game Designer"],
+        "locationSearch": ["United States"],
+        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
+        "descriptionType": "text",
+        "includeAi": true,
+        "includeLinkedIn": true,
+        "includeJobAggregator": true,
+        "makeRecordsUnique": true
+      }
+    },
+    {
       "id": "linkedin_csharp",
       "type": "apify_actor",
       "enabled": true,
@@ -192,6 +300,48 @@
         "timeRange": "6m",
         "limit": 200,
         "titleSearch": ["Solutions Engineer", "Solutions Consultant", "Technical Solutions"],
+        "locationSearch": ["Massachusetts"],
+        "descriptionType": "text"
+      }
+    },
+    {
+      "id": "linkedin_sales_engineer",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
+      "adapter": "linkedin_generic",
+      "input": {
+        "timeRange": "6m",
+        "limit": 200,
+        "titleSearch": ["Sales Engineer"],
+        "locationSearch": ["Massachusetts"],
+        "descriptionType": "text"
+      }
+    },
+    {
+      "id": "linkedin_client_success",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
+      "adapter": "linkedin_generic",
+      "input": {
+        "timeRange": "6m",
+        "limit": 200,
+        "titleSearch": ["Client Success"],
+        "locationSearch": ["Massachusetts"],
+        "descriptionType": "text"
+      }
+    },
+    {
+      "id": "linkedin_impl_manager",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
+      "adapter": "linkedin_generic",
+      "input": {
+        "timeRange": "6m",
+        "limit": 200,
+        "titleSearch": ["Implementation Manager"],
         "locationSearch": ["Massachusetts"],
         "descriptionType": "text"
       }
