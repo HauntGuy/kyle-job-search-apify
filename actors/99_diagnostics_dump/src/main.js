@@ -203,7 +203,12 @@ Actor.main(async () => {
     );
   }
 
-  const summarySection = `<h2>Summary</h2><ul>${summaryItems.join('')}</ul>`;
+  const unscoredCount = Number(scoringReport?.unscoredCount || 0);
+  const unscoredBanner = unscoredCount > 0
+    ? `<div style="background:#fff3cd;border:2px solid #ffc107;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:16px;"><b>⚠️ ${unscoredCount} job${unscoredCount === 1 ? '' : 's'} remain${unscoredCount === 1 ? 's' : ''} unscored, due to rate limits</b></div>`
+    : '';
+
+  const summarySection = `${unscoredBanner}<h2>Summary</h2><ul>${summaryItems.join('')}</ul>`;
 
   const envCheck = {
     GIST_ID: gistId ? 'set' : 'missing',

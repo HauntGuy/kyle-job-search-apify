@@ -78,8 +78,14 @@ Actor.main(async () => {
   const subject = `${subjectPrefix} Accepted: ${acceptedCount} (Scored: ${totalScored})`;
 
   const diagnosticsUrl = config?.diagnostics?.publicDiagnosticsUrl || '';
+  const unscoredCount = Number(scoringReport?.unscoredCount || 0);
+  const unscoredWarning = unscoredCount > 0
+    ? `<div style="background:#fff3cd;border:2px solid #ffc107;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:16px;"><b>⚠️ ${unscoredCount} job${unscoredCount === 1 ? '' : 's'} remain${unscoredCount === 1 ? 's' : ''} unscored, due to rate limits</b></div>`
+    : '';
+
   const html = `
     <div style="font-family: Arial, sans-serif;">
+      ${unscoredWarning}
       <h2>Job Search Results</h2>
       <p><b>Accepted:</b> ${acceptedCount}<br/>
          <b>Scored:</b> ${totalScored}</p>

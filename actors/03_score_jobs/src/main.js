@@ -519,7 +519,8 @@ Actor.main(async () => {
     hardFailures: 0,
   };
 
-  const results = await mapWithConcurrency(mergedJobs, concurrency, async (job, idx) => {
+  // --- Scoring helper (reused for initial pass and re-score passes) ---
+  async function scoreOneJob(job, idx) {
     const jobForPrompt = {
       title: job.title || '',
       company: job.company || '',
@@ -550,7 +551,7 @@ Actor.main(async () => {
     try {
       const evaluation = await withRetries(
         () => callOpenAIJson({ apiKey, model, messages, stats: openAiStats }),
-        { retries: 5, baseMs: 800, maxMs: 12000, stats: openAiStats }
+        { retries: 8, baseMs: 800, maxMs: 30000, stats: openAiStats }
       );
 
       const score = toInt(evaluation.score ?? evaluation.Score ?? 0, 0);
@@ -562,7 +563,7 @@ Actor.main(async () => {
         score >= threshold &&
         (!gateOnLocation || locationOk === 'yes');
 
-      const scored = {
+      return {
         ...job,
         evaluation: {
           ...evaluation,
@@ -573,13 +574,11 @@ Actor.main(async () => {
         },
         scoredAt: nowIso(),
       };
-
-      return scored;
     } catch (err) {
       if (err?.status || String(err?.message || '').includes('OpenAI')) openAiStats.hardFailures += 1;
       log.error(`Scoring failed for idx=${idx} title="${job.title}": ${err?.message || err}`);
 
-      const scored = {
+      return {
         ...job,
         evaluation: {
           accept: false,
@@ -595,9 +594,43 @@ Actor.main(async () => {
         scoredAt: nowIso(),
         scoringError: String(err?.stack || err),
       };
-      return scored;
     }
-  });
+  }
+
+  // --- Initial scoring pass ---
+  const results = await mapWithConcurrency(mergedJobs, concurrency, scoreOneJob);
+
+  // --- Re-score passes for failed jobs (up to 3 additional attempts) ---
+  const maxRescoringPasses = 3;
+  for (let pass = 1; pass <= maxRescoringPasses; pass++) {
+    const failedIndices = [];
+    for (let i = 0; i < results.length; i++) {
+      if (results[i].scoringError) failedIndices.push(i);
+    }
+
+    if (failedIndices.length === 0) {
+      log.info(`All jobs scored successfully (no failures to re-score).`);
+      break;
+    }
+
+    log.info(`Re-scoring pass ${pass}/${maxRescoringPasses}: ${failedIndices.length} failed jobs. Waiting 15s for rate limits to cool...`);
+    await sleep(15000);
+
+    const failedJobs = failedIndices.map((i) => ({ job: mergedJobs[i], origIdx: i }));
+    const rescored = await mapWithConcurrency(
+      failedJobs,
+      Math.min(concurrency, 4),
+      async (item, _batchIdx) => scoreOneJob(item.job, item.origIdx)
+    );
+
+    let fixed = 0;
+    for (let k = 0; k < failedIndices.length; k++) {
+      if (!rescored[k].scoringError) fixed += 1;
+      results[failedIndices[k]] = rescored[k];
+    }
+
+    log.info(`Re-scoring pass ${pass}: fixed ${fixed}/${failedIndices.length} jobs.`);
+  }
 
   // Push scored + accepted datasets
   const scoredBatch = 200;
@@ -647,6 +680,18 @@ Actor.main(async () => {
     rubricUrl,
     openai: openAiStats,
   };
+
+  // Count any remaining unscored jobs after all re-score passes
+  const unscoredJobs = results.filter((j) => j.scoringError);
+  report.unscoredCount = unscoredJobs.length;
+
+  if (unscoredJobs.length > 0) {
+    report.warnings = report.warnings || [];
+    report.warnings.unshift(
+      `${unscoredJobs.length} jobs remain unscored, due to rate limits`
+    );
+    log.warning(`${unscoredJobs.length} jobs remain unscored after ${maxRescoringPasses} re-score passes.`);
+  }
 
   if (openAiStats.rateLimit429 > 0) {
     report.warnings = report.warnings || [];
