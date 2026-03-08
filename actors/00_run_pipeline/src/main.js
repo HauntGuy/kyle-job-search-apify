@@ -132,16 +132,22 @@ Actor.main(async () => {
       log.warning('Notify disabled by config.notify.enabled=false');
     }
 
-    // 5) Diagnostics (optional)
-    if (config?.diagnostics?.enabled) {
-      const diagActor = resolveActorId({ config, actorUser, step: 'diagnostics' });
-      stepRuns.diagnostics = await safeCallActor(diagActor, { config, kvStoreName, datasetPrefix, runId }, 'diagnostics');
-    } else {
-      log.info('Diagnostics upload disabled by config.diagnostics.enabled=false');
-    }
   } catch (err) {
     overallStatus = 'FAILED';
     log.error(`Pipeline failed: ${err?.stack || err}`);
+
+    // Write pipeline_report.json BEFORE best-effort diagnostics so the
+    // diagnostics actor reads the current run's report, not a stale one.
+    const failReport = {
+      ...pipelineMeta,
+      finishedAt: nowIso(),
+      status: overallStatus,
+      errorMessage: String(err?.message || err),
+      stepRuns: Object.fromEntries(
+        Object.entries(stepRuns).map(([k, r]) => [k, { id: r?.id || null, status: r?.status || null }])
+      ),
+    };
+    await kv.setValue('pipeline_report.json', failReport);
 
     // Best-effort diagnostics on failure
     try {
@@ -162,16 +168,26 @@ Actor.main(async () => {
     }
 
     throw err;
-  } finally {
-    const finishedAt = nowIso();
-    const report = {
-      ...pipelineMeta,
-      finishedAt,
-      status: overallStatus,
-      stepRuns: Object.fromEntries(
-        Object.entries(stepRuns).map(([k, r]) => [k, { id: r?.id || null, status: r?.status || null }])
-      ),
-    };
-    await kv.setValue('pipeline_report.json', report);
+  }
+
+  // Write pipeline_report.json BEFORE calling diagnostics so it reads the
+  // current run's report, not a stale one from a previous run.
+  const finishedAt = nowIso();
+  const report = {
+    ...pipelineMeta,
+    finishedAt,
+    status: overallStatus,
+    stepRuns: Object.fromEntries(
+      Object.entries(stepRuns).map(([k, r]) => [k, { id: r?.id || null, status: r?.status || null }])
+    ),
+  };
+  await kv.setValue('pipeline_report.json', report);
+
+  // 5) Diagnostics (optional) — runs AFTER pipeline_report.json is written
+  if (config?.diagnostics?.enabled) {
+    const diagActor = resolveActorId({ config, actorUser, step: 'diagnostics' });
+    stepRuns.diagnostics = await safeCallActor(diagActor, { config, kvStoreName, datasetPrefix, runId }, 'diagnostics');
+  } else {
+    log.info('Diagnostics upload disabled by config.diagnostics.enabled=false');
   }
 });
