@@ -4,30 +4,21 @@
   "datasetPrefix": "jobsearch-v3",
   "run": {
     "maxItemsPerSource": 500,
-    "maxTotalItems": 1500,
+    "maxTotalItems": 5000,
     "stopOnCollectorErrors": false
   },
   "sources": [
     {
-      "id": "fantastic_feed",
+      "id": "fantastic_unity",
       "type": "apify_actor",
       "enabled": true,
       "actorId": "fantastic-jobs/career-site-job-listing-feed",
       "adapter": "fantastic_feed",
       "input": {
         "limit": 500,
-        "titleSearch": [
-          "Unity"
-        ],
-        "locationSearch": [
-          "United States"
-        ],
-        "aiWorkArrangementFilter": [
-          "Remote OK",
-          "Remote Solely",
-          "Hybrid",
-          "On-site"
-        ],
+        "titleSearch": ["Unity"],
+        "locationSearch": ["United States"],
+        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
         "descriptionType": "text",
         "includeAi": true,
         "includeLinkedIn": true,
@@ -36,7 +27,7 @@
       }
     },
     {
-      "id": "linkedin_jobs",
+      "id": "linkedin_unity",
       "type": "apify_actor",
       "enabled": true,
       "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
@@ -44,12 +35,164 @@
       "input": {
         "timeRange": "7d",
         "limit": 300,
-        "titleSearch": [
-          "Unity"
-        ],
-        "locationSearch": [
-          "United States"
-        ],
+        "titleSearch": ["Unity"],
+        "locationSearch": ["United States"],
+        "descriptionType": "text"
+      }
+    },
+    {
+      "id": "fantastic_csharp",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/career-site-job-listing-feed",
+      "adapter": "fantastic_feed",
+      "input": {
+        "limit": 300,
+        "titleSearch": ["C#"],
+        "locationSearch": ["Massachusetts"],
+        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
+        "descriptionType": "text",
+        "includeAi": true,
+        "includeLinkedIn": true,
+        "includeJobAggregator": true,
+        "makeRecordsUnique": true
+      }
+    },
+    {
+      "id": "fantastic_csharp_remote",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/career-site-job-listing-feed",
+      "adapter": "fantastic_feed",
+      "input": {
+        "limit": 300,
+        "titleSearch": ["C#"],
+        "locationSearch": ["United States"],
+        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely"],
+        "descriptionType": "text",
+        "includeAi": true,
+        "includeLinkedIn": true,
+        "includeJobAggregator": true,
+        "makeRecordsUnique": true
+      }
+    },
+    {
+      "id": "fantastic_implementation",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/career-site-job-listing-feed",
+      "adapter": "fantastic_feed",
+      "input": {
+        "limit": 300,
+        "titleSearch": ["Implementation Specialist", "Implementation Consultant", "Onboarding Specialist"],
+        "locationSearch": ["Massachusetts"],
+        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
+        "descriptionType": "text",
+        "includeAi": true,
+        "includeLinkedIn": true,
+        "includeJobAggregator": true,
+        "makeRecordsUnique": true
+      }
+    },
+    {
+      "id": "fantastic_customer_success",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/career-site-job-listing-feed",
+      "adapter": "fantastic_feed",
+      "input": {
+        "limit": 300,
+        "titleSearch": ["Customer Success Manager", "Customer Success Engineer", "Technical Account Manager"],
+        "locationSearch": ["Massachusetts"],
+        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
+        "descriptionType": "text",
+        "includeAi": true,
+        "includeLinkedIn": true,
+        "includeJobAggregator": true,
+        "makeRecordsUnique": true
+      }
+    },
+    {
+      "id": "linkedin_csharp",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
+      "adapter": "linkedin_generic",
+      "input": {
+        "timeRange": "6m",
+        "limit": 200,
+        "titleSearch": ["C#"],
+        "locationSearch": ["Massachusetts"],
+        "descriptionType": "text"
+      }
+    },
+    {
+      "id": "linkedin_gamedev",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
+      "adapter": "linkedin_generic",
+      "input": {
+        "timeRange": "6m",
+        "limit": 200,
+        "titleSearch": ["Game Developer", "Game Programmer", "Game Designer"],
+        "locationSearch": ["United States"],
+        "descriptionType": "text"
+      }
+    },
+    {
+      "id": "linkedin_implementation",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
+      "adapter": "linkedin_generic",
+      "input": {
+        "timeRange": "6m",
+        "limit": 200,
+        "titleSearch": ["Implementation Specialist", "Implementation Consultant", "Onboarding Specialist"],
+        "locationSearch": ["Massachusetts"],
+        "descriptionType": "text"
+      }
+    },
+    {
+      "id": "linkedin_customer_success",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
+      "adapter": "linkedin_generic",
+      "input": {
+        "timeRange": "6m",
+        "limit": 200,
+        "titleSearch": ["Customer Success Manager", "Customer Success Engineer", "Technical Account Manager"],
+        "locationSearch": ["Massachusetts"],
+        "descriptionType": "text"
+      }
+    },
+    {
+      "id": "linkedin_support",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
+      "adapter": "linkedin_generic",
+      "input": {
+        "timeRange": "6m",
+        "limit": 200,
+        "titleSearch": ["Technical Support Engineer", "Support Engineer", "Product Support Engineer", "Application Support"],
+        "locationSearch": ["Massachusetts"],
+        "descriptionType": "text"
+      }
+    },
+    {
+      "id": "linkedin_solutions",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
+      "adapter": "linkedin_generic",
+      "input": {
+        "timeRange": "6m",
+        "limit": 200,
+        "titleSearch": ["Solutions Engineer", "Solutions Consultant", "Technical Solutions"],
+        "locationSearch": ["Massachusetts"],
         "descriptionType": "text"
       }
     },
@@ -69,9 +212,7 @@
       "id": "rapidapi_jsearch",
       "type": "rapidapi_jsearch",
       "enabled": false,
-      "requiredEnv": [
-        "RAPIDAPI_KEY"
-      ],
+      "requiredEnv": ["RAPIDAPI_KEY"],
       "query": "unity developer in united states",
       "page": 1,
       "num_pages": 1,
