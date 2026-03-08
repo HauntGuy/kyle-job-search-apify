@@ -27,12 +27,14 @@ Return a JSON object with:
 ## Location constraints
 
 - Candidate is near **Lexington, MA**.
-- If job is **Remote** (or explicitly “Remote OK”): location_ok = "yes".
+- If job is **Remote** (or explicitly “Remote OK”): location_ok = “yes”.
 - If job is **Hybrid/On-site**:
-  - location_ok = "yes" only if the office is in **Massachusetts** and plausibly commutable (~45 min from Lexington).
-  - otherwise location_ok = "no".
-- If the location text is ambiguous (e.g., "Lexington" without a state, or marketing fluff like “Hybrid preferred but Remote OK”):
-  - location_ok = "unknown" (do NOT auto-disqualify; note ambiguity in reasons).
+  - location_ok = “yes” only if the office is plausibly within a **~45-minute commute of Lexington, MA**.
+  - This includes most of eastern/central Massachusetts (e.g. Boston, Cambridge, Waltham, Framingham, Worcester, Northborough, Lowell, etc.).
+  - otherwise location_ok = “no”.
+- **Location is a binary pass/fail.** A commutable job (10 minutes away) and a further-but-still-commutable job (40 minutes away) should receive **the same score** for location. Do NOT penalize score for commute distance within the 45-minute radius.
+- If the location text is ambiguous (e.g., “Lexington” without a state, or marketing fluff like “Hybrid preferred but Remote OK”):
+  - location_ok = “unknown” (do NOT auto-disqualify; note ambiguity in reasons).
 
 ## Compensation rule
 
@@ -48,8 +50,9 @@ If any of these are clearly true, set `accept=false` and include the reason in `
 - React-heavy front-end (React is a primary requirement and central to the role).
 - VR/XR/AR focus REQUIRED (optional/minor mention is OK).
 - Android SDK / native Android game development REQUIRED.
-- On-site/hybrid required outside Massachusetts.
+- **location_ok = “no”** (on-site/hybrid required outside ~45-minute commute of Lexington, MA). This is always a deal-breaker.
 - Explicit visa-targeting that excludes the candidate or is “OPT/CPT/H1B-only / non-immigrant visa people only”.
+- **Art/artist/visual-design roles** (e.g. “Technical Artist,” “3D Artist,” “Character Artist,” “VFX Artist”). The candidate is a programmer, not an artist. Even if the title mentions Unity, artist roles are not a fit.
 - Non-software roles (sales/recruiting-only, marketing, HR, etc.) or obvious scams.
 
 ## Scoring guidance

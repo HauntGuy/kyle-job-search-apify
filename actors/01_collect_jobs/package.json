@@ -6,6 +6,7 @@
     "start": "node src/main.js"
   },
   "dependencies": {
-    "apify": "^3.0.0"
+    "apify": "^3.0.0",
+    "exceljs": "^4.4.0"
   }
 }

@@ -2,6 +2,7 @@
 // Collect jobs from multiple configured sources and write normalized records to a per-run dataset.
 
 import { Actor, log } from 'apify';
+import ExcelJS from 'exceljs';
 
 function nowIso() { return new Date().toISOString(); }
 function safeRunId(runId) { if (!runId) return null; return String(runId).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80); }
@@ -390,14 +391,7 @@ async function runSource(source, config, remaining) {
   throw new Error(`[${source.id}] Unknown source.type=${source.type}`);
 }
 
-// --------------- collected.csv helpers ---------------
-
-function csvEscape(value) {
-  const s = (value ?? '').toString();
-  const needs = /[",\n]/.test(s);
-  const out = s.replace(/"/g, '""');
-  return needs ? `"${out}"` : out;
-}
+// --------------- collected.xlsx helpers ---------------
 
 function collectedFriendlySource(sourceId) {
   const map = {
@@ -410,33 +404,62 @@ function collectedFriendlySource(sourceId) {
   return map[sourceId] || sourceId || '';
 }
 
-function collectedHyperlink(url, text) {
-  const safeText = String(text || '').trim();
-  if (!url) return safeText;
-  let safeUrl = String(url).trim();
-  if (!safeUrl) return safeText;
-  if (!/^https?:\/\//i.test(safeUrl)) safeUrl = `https://${safeUrl}`;
-  return `=HYPERLINK("${safeUrl}","${safeText || safeUrl}")`;
+function ensureProtocol(url) {
+  if (!url) return '';
+  const s = String(url).trim();
+  if (!s) return '';
+  if (!/^https?:\/\//i.test(s)) return `https://${s}`;
+  return s;
 }
 
-function buildCollectedCsv(jobs) {
-  const header = ['Source', 'Company', 'Job Title', 'Location', 'Salary', 'Posted At', 'URL'];
-  const lines = [header.map(csvEscape).join(',')];
+function setCellHyperlink(cell, url, text) {
+  const displayText = String(text || '').trim();
+  const href = ensureProtocol(url);
+  if (href) {
+    cell.value = { text: displayText || href, hyperlink: href };
+    cell.font = { ...cell.font, color: { argb: 'FF0563C1' }, underline: true };
+  } else {
+    cell.value = displayText;
+  }
+}
+
+async function buildCollectedXlsx(jobs) {
+  const workbook = new ExcelJS.Workbook();
+  const ws = workbook.addWorksheet('Collected');
+
+  ws.columns = [
+    { header: 'Source',    width: 14 },
+    { header: 'Company',   width: 26 },
+    { header: 'Job Title', width: 46 },
+    { header: 'Location',  width: 36 },
+    { header: 'Salary',    width: 22 },
+    { header: 'Posted At', width: 22 },
+    { header: 'URL',       width: 50 },
+  ];
+
+  // Bold header row
+  ws.getRow(1).font = { bold: true };
+
+  // Freeze top row + first 2 columns
+  ws.views = [{ state: 'frozen', xSplit: 2, ySplit: 1 }];
 
   for (const j of jobs) {
-    const row = [
+    const row = ws.addRow([
       collectedFriendlySource(j.source),
       j.company || '',
-      collectedHyperlink(j.applyUrl || j.url, j.title || ''),
+      j.title || '',            // will become hyperlink
       j.location || '',
       j.salary || '',
       j.postedAt || '',
       j.url || j.applyUrl || '',
-    ];
-    lines.push(row.map(csvEscape).join(','));
+    ]);
+
+    // Job Title hyperlink
+    const jobUrl = j.applyUrl || j.url || '';
+    setCellHyperlink(row.getCell(3), jobUrl, j.title || '');
   }
 
-  return lines.join('\n') + '\n';
+  return await workbook.xlsx.writeBuffer();
 }
 
 Actor.main(async () => {
@@ -541,9 +564,11 @@ Actor.main(async () => {
   await kv.setValue('raw_dataset.json', datasetInfo);
   await kv.setValue('collect_report.json', report);
 
-  // Build collected.csv for debugging (all raw jobs before merge/dedup)
-  const collectedCsv = buildCollectedCsv(allJobs);
-  await kv.setValue('collected.csv', collectedCsv, { contentType: 'text/csv; charset=utf-8' });
+  // Build collected.xlsx for debugging (all raw jobs before merge/dedup)
+  const collectedXlsx = await buildCollectedXlsx(allJobs);
+  await kv.setValue('collected.xlsx', collectedXlsx, {
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
 
-  log.info(`Collection complete. Pushed ${pushed} jobs to dataset ${rawDatasetName}. collected.csv written to KV store.`);
+  log.info(`Collection complete. Pushed ${pushed} jobs to dataset ${rawDatasetName}. collected.xlsx written to KV store.`);
 });

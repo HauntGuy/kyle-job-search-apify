@@ -1,8 +1,9 @@
 // actors/03_score_jobs/src/main.js
 // Scores merged jobs with an LLM using an external rubric file, writes scored + accepted datasets,
-// and produces accepted.csv in the KV store.
+// and produces accepted.xlsx + scored.xlsx in the KV store.
 
 import { Actor, log } from 'apify';
+import ExcelJS from 'exceljs';
 
 function nowIso() {
   return new Date().toISOString();
@@ -247,19 +248,7 @@ function truncate(s, maxChars) {
   return t.slice(0, maxChars) + '\n\n[TRUNCATED]';
 }
 
-function csvEscape(value) {
-  const s = (value ?? '').toString();
-  const needs = /[",\n]/.test(s);
-  const out = s.replace(/"/g, '""');
-  return needs ? `"${out}"` : out;
-}
-
-function joinSources(sources) {
-  const arr = Array.isArray(sources) ? sources : [];
-  return arr.filter(Boolean).join(';');
-}
-
-// --------------- CSV helpers for Google Sheets HYPERLINK format ---------------
+// --------------- XLSX helpers ---------------
 
 function friendlySourceName(sourceId) {
   const map = {
@@ -332,14 +321,12 @@ function calculateAgeDays(postedAt) {
   }
 }
 
-function hyperlinkFormula(url, text) {
-  const safeText = String(text || '').trim();
-  if (!url) return safeText;
-  let safeUrl = String(url).trim();
-  if (!safeUrl) return safeText;
-  // Ensure URL has protocol
-  if (!/^https?:\/\//i.test(safeUrl)) safeUrl = `https://${safeUrl}`;
-  return `=HYPERLINK("${safeUrl}","${safeText || safeUrl}")`;
+function ensureProtocol(url) {
+  if (!url) return '';
+  const s = String(url).trim();
+  if (!s) return '';
+  if (!/^https?:\/\//i.test(s)) return `https://${s}`;
+  return s;
 }
 
 function formatSalary(raw) {
@@ -368,62 +355,91 @@ function formatSalary(raw) {
   return s;
 }
 
-// Build a CSV string from an array of scored jobs using the standard column format
-function buildScoredCsv(jobs) {
-  const header = [
-    'Company', 'Job Title', 'Salary', 'Where', 'Score',
-    'Age (days)', 'Where Found', 'Sources', 'Reason', 'Tags', 'Red Flags'
+/**
+ * Set a cell to a clickable hyperlink with display text.
+ * If url is empty, just sets the cell to plain text.
+ */
+function setCellHyperlink(cell, url, text) {
+  const displayText = String(text || '').trim();
+  const href = ensureProtocol(url);
+  if (href) {
+    cell.value = { text: displayText || href, hyperlink: href };
+    cell.font = { ...cell.font, color: { argb: 'FF0563C1' }, underline: true };
+  } else {
+    cell.value = displayText;
+  }
+}
+
+// Build an XLSX workbook buffer from an array of scored jobs
+async function buildScoredXlsx(jobs) {
+  const workbook = new ExcelJS.Workbook();
+  const ws = workbook.addWorksheet('Jobs');
+
+  // Define columns with widths
+  ws.columns = [
+    { header: 'Company',      width: 26 },
+    { header: 'Job Title',    width: 46 },
+    { header: 'Salary',       width: 26 },
+    { header: 'Where',        width: 36 },
+    { header: 'Score',        width: 8  },
+    { header: 'Age (days)',   width: 11 },
+    { header: 'Where Found',  width: 19 },
+    { header: 'Sources',      width: 19 },
+    { header: 'Reason',       width: 52 },
+    { header: 'Tags',         width: 36 },
+    { header: 'Red Flags',    width: 42 },
   ];
 
-  const lines = [header.map(csvEscape).join(',')];
+  // Bold header row
+  const headerRow = ws.getRow(1);
+  headerRow.font = { bold: true };
+
+  // Freeze top row + first 2 columns
+  ws.views = [{ state: 'frozen', xSplit: 2, ySplit: 1 }];
 
   for (const j of jobs) {
     const ev = j.evaluation || {};
     const tags = Array.isArray(ev.tags) ? ev.tags.join('; ') : '';
-    const redFlags = Array.isArray(ev.red_flags) ? ev.red_flags.join('; ') : '';
+    const redFlags = Array.isArray(ev.red_flags) ? ev.red_flags.join(' ') : '';
 
-    // Company: structured companyUrl → LLM company_url → plain text
-    const companyUrlFinal = j.companyUrl || ev.company_url || '';
-    const companyCell = hyperlinkFormula(companyUrlFinal, j.company || '');
-
-    // Job Title: clickable link to job (LinkedIn URL preferred via merge step)
-    const jobUrl = j.applyUrl || j.url || '';
-    const jobTitleCell = hyperlinkFormula(jobUrl, j.title || '');
-
-    // Salary: structured → LLM-extracted → formatted
     const salary = formatSalary(j.salary || ev.salary_extracted || '');
-
-    // Where: location
     const where = j.location || '';
-
-    // Score
     const score = ev.score ?? 0;
-
-    // Age (days): days since earliest posting date
     const ageDays = calculateAgeDays(j.earliestPostedAt || j.postedAt);
+    const sourcesArr = Array.isArray(j.sources) ? j.sources : [j.source].filter(Boolean);
+    const sourcesStr = sourcesArr.map(friendlySourceName).filter(Boolean).join(', ');
+    const reason = ev.reason_short || '';
 
-    // Where Found: root domain of the job listing URL, with friendly name
+    const row = ws.addRow([
+      j.company || '',                     // 1: Company (will become hyperlink)
+      j.title || '',                       // 2: Job Title (will become hyperlink)
+      salary,                              // 3: Salary
+      where,                               // 4: Where
+      score,                               // 5: Score
+      ageDays === '' ? '' : ageDays,       // 6: Age (days)
+      '',                                  // 7: Where Found (will become hyperlink)
+      sourcesStr,                          // 8: Sources
+      reason,                              // 9: Reason
+      tags,                                // 10: Tags
+      redFlags,                            // 11: Red Flags
+    ]);
+
+    // Company hyperlink
+    const companyUrl = j.companyUrl || ev.company_url || '';
+    setCellHyperlink(row.getCell(1), companyUrl, j.company || '');
+
+    // Job Title hyperlink
+    const jobUrl = j.applyUrl || j.url || '';
+    setCellHyperlink(row.getCell(2), jobUrl, j.title || '');
+
+    // Where Found hyperlink
     const foundUrl = j.url || j.applyUrl || '';
     const rootUrl = extractRootDomainUrl(foundUrl);
     const foundName = friendlyDomainName(foundUrl, j.company);
-    const whereFoundCell = hyperlinkFormula(rootUrl, foundName);
-
-    // Sources: friendly names of job feeds that found this job
-    const sourcesArr = Array.isArray(j.sources) ? j.sources : [j.source].filter(Boolean);
-    const sourcesStr = sourcesArr.map(friendlySourceName).filter(Boolean).join(', ');
-
-    // Reason, Tags, Red Flags
-    const reason = ev.reason_short || '';
-
-    const row = [
-      companyCell, jobTitleCell, salary, where, score,
-      ageDays, whereFoundCell, sourcesStr, reason, tags, redFlags,
-    ];
-
-    lines.push(row.map(csvEscape).join(','));
+    setCellHyperlink(row.getCell(7), rootUrl, foundName);
   }
 
-  return lines.join('\n') + '\n';
+  return await workbook.xlsx.writeBuffer();
 }
 
 Actor.main(async () => {
@@ -581,15 +597,17 @@ Actor.main(async () => {
     }
   }
 
-  // Build accepted.csv + scored.csv (Google Sheets HYPERLINK format)
-  const acceptedCsv = buildScoredCsv(acceptedJobs);
-  await kv.setValue('accepted.csv', acceptedCsv, { contentType: 'text/csv; charset=utf-8' });
+  // Build accepted.xlsx + scored.xlsx (Excel format with hyperlinks, frozen panes, bold headers)
+  const xlsxContentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
-  // scored.csv contains ALL scored jobs (accepted + rejected) for review
+  const acceptedXlsx = await buildScoredXlsx(acceptedJobs);
+  await kv.setValue('accepted.xlsx', acceptedXlsx, { contentType: xlsxContentType });
+
+  // scored.xlsx contains ALL scored jobs (accepted + rejected) for review
   // Sort by score descending so best matches appear first
   const allSorted = [...results].sort((a, b) => (b.evaluation?.score ?? 0) - (a.evaluation?.score ?? 0));
-  const scoredCsv = buildScoredCsv(allSorted);
-  await kv.setValue('scored.csv', scoredCsv, { contentType: 'text/csv; charset=utf-8' });
+  const scoredXlsx = await buildScoredXlsx(allSorted);
+  await kv.setValue('scored.xlsx', scoredXlsx, { contentType: xlsxContentType });
 
   const finishedAt = nowIso();
   const report = {
@@ -621,5 +639,5 @@ Actor.main(async () => {
 
   await kv.setValue('scoring_report.json', report);
 
-  log.info(`Scoring complete. accepted=${acceptedJobs.length}/${results.length}. accepted.csv + scored.csv written to KV store.`);
+  log.info(`Scoring complete. accepted=${acceptedJobs.length}/${results.length}. accepted.xlsx + scored.xlsx written to KV store.`);
 });
