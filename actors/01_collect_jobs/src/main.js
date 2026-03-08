@@ -2,6 +2,7 @@
 // Collect jobs from multiple configured sources and write normalized records to a per-run dataset.
 
 import { Actor, log } from 'apify';
+import ExcelJS from 'exceljs';
 
 function nowIso() { return new Date().toISOString(); }
 function safeRunId(runId) { if (!runId) return null; return String(runId).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80); }
@@ -93,17 +94,21 @@ function normalizeGeneric(sourceId, raw) {
   const applyUrl = firstString(raw.apply_url, raw.applyUrl, raw.job_apply_link, raw.application_url, raw.apply_link);
   const description = firstString(raw.description_text, raw.description, raw.job_description, raw.descriptionText);
   const postedAt = firstString(raw.job_posted_at_datetime_utc, raw.publication_date, raw.date, raw.postedAt);
+  const companyUrl = firstString(raw.company_url, raw.companyUrl, raw.employer_website, raw.organization_url, raw.company_website);
+  const salary = firstString(raw.salary, raw.salary_range, raw.compensation);
 
   const out = {
     source: sourceId,
     fetchedAt: nowIso(),
     title,
     company,
+    companyUrl: canonicalizeUrl(companyUrl),
     location,
     url: canonicalizeUrl(url),
     applyUrl: canonicalizeUrl(applyUrl || url),
     postedAt: toIsoOrEmpty(postedAt),
     description,
+    salary,
     raw,
   };
 
@@ -116,6 +121,7 @@ function normalizeFantasticFeed(sourceId, raw) {
   const company = firstString(raw.organization, raw.company, raw.company_name);
   const url = firstString(raw.url, raw.job_url);
   const applyUrl = firstString(raw.apply_url, raw.applyUrl, raw.apply_link, raw.application_url, url);
+  const companyUrl = firstString(raw.organization_url, raw.company_url, raw.company_website, raw.employer_website);
 
   const locationsDerived = asArray(raw.locations_derived).filter(Boolean);
   const locationsRaw = asArray(raw.locations_raw).filter(Boolean);
@@ -140,6 +146,7 @@ function normalizeFantasticFeed(sourceId, raw) {
     fetchedAt: nowIso(),
     title,
     company,
+    companyUrl: canonicalizeUrl(companyUrl),
     location: locParts.filter(Boolean).join(' | '),
     url: canonicalizeUrl(url),
     applyUrl: canonicalizeUrl(applyUrl),
@@ -164,12 +171,14 @@ function normalizeJSearch(sourceId, raw) {
   const description = firstString(raw.job_description);
   const employmentType = firstString(raw.job_employment_type);
   const salary = firstString(raw.job_salary, raw.job_min_salary && raw.job_max_salary ? `${raw.job_min_salary}-${raw.job_max_salary}` : '');
+  const companyUrl = firstString(raw.employer_website, raw.employer_company_url, raw.company_url);
 
   return {
     source: sourceId,
     fetchedAt: nowIso(),
     title,
     company,
+    companyUrl: canonicalizeUrl(companyUrl),
     location,
     url: canonicalizeUrl(url),
     applyUrl: canonicalizeUrl(applyUrl),
@@ -382,6 +391,77 @@ async function runSource(source, config, remaining) {
   throw new Error(`[${source.id}] Unknown source.type=${source.type}`);
 }
 
+// --------------- collected.xlsx helpers ---------------
+
+function collectedFriendlySource(sourceId) {
+  const map = {
+    'fantastic_feed': 'Fantastic',
+    'linkedin_jobs': 'LinkedIn',
+    'remotive': 'Remotive',
+    'remoteok': 'RemoteOK',
+    'rapidapi_jsearch': 'JSearch',
+  };
+  return map[sourceId] || sourceId || '';
+}
+
+function ensureProtocol(url) {
+  if (!url) return '';
+  const s = String(url).trim();
+  if (!s) return '';
+  if (!/^https?:\/\//i.test(s)) return `https://${s}`;
+  return s;
+}
+
+function setCellHyperlink(cell, url, text) {
+  const displayText = String(text || '').trim();
+  const href = ensureProtocol(url);
+  if (href) {
+    cell.value = { text: displayText || href, hyperlink: href };
+    cell.font = { ...cell.font, color: { argb: 'FF0563C1' }, underline: true };
+  } else {
+    cell.value = displayText;
+  }
+}
+
+async function buildCollectedXlsx(jobs) {
+  const workbook = new ExcelJS.Workbook();
+  const ws = workbook.addWorksheet('Collected');
+
+  ws.columns = [
+    { header: 'Source',    width: 14 },
+    { header: 'Company',   width: 26 },
+    { header: 'Job Title', width: 46 },
+    { header: 'Location',  width: 36 },
+    { header: 'Salary',    width: 22 },
+    { header: 'Posted At', width: 22 },
+    { header: 'URL',       width: 50 },
+  ];
+
+  // Bold header row
+  ws.getRow(1).font = { bold: true };
+
+  // Freeze top row + first 2 columns
+  ws.views = [{ state: 'frozen', xSplit: 2, ySplit: 1 }];
+
+  for (const j of jobs) {
+    const row = ws.addRow([
+      collectedFriendlySource(j.source),
+      j.company || '',
+      j.title || '',            // will become hyperlink
+      j.location || '',
+      j.salary || '',
+      j.postedAt || '',
+      j.url || j.applyUrl || '',
+    ]);
+
+    // Job Title hyperlink
+    const jobUrl = j.applyUrl || j.url || '';
+    setCellHyperlink(row.getCell(3), jobUrl, j.title || '');
+  }
+
+  return await workbook.xlsx.writeBuffer();
+}
+
 Actor.main(async () => {
   const input = (await Actor.getInput()) || {};
   const config = await loadConfig(input);
@@ -484,5 +564,11 @@ Actor.main(async () => {
   await kv.setValue('raw_dataset.json', datasetInfo);
   await kv.setValue('collect_report.json', report);
 
-  log.info(`Collection complete. Pushed ${pushed} jobs to dataset ${rawDatasetName}`);
+  // Build collected.xlsx for debugging (all raw jobs before merge/dedup)
+  const collectedXlsx = await buildCollectedXlsx(allJobs);
+  await kv.setValue('collected.xlsx', collectedXlsx, {
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+
+  log.info(`Collection complete. Pushed ${pushed} jobs to dataset ${rawDatasetName}. collected.xlsx written to KV store.`);
 });

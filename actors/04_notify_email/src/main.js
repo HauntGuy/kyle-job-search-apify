@@ -1,5 +1,5 @@
 // actors/04_notify_email/src/main.js
-// Sends an email summary (and attaches accepted.csv) using apify/send-mail.
+// Sends an email summary (and attaches XLSX spreadsheets) using apify/send-mail.
 
 import { Actor, log } from 'apify';
 
@@ -55,7 +55,9 @@ Actor.main(async () => {
   const kvStoreName = input.kvStoreName || config.kvStoreName || 'job-pipeline-v3';
   const kv = await Actor.openKeyValueStore(kvStoreName);
 
-  const acceptedCsv = await kv.getValue('accepted.csv');
+  const acceptedXlsx = await kv.getValue('accepted.xlsx');
+  const scoredXlsx = await kv.getValue('scored.xlsx');
+  const collectedXlsx = await kv.getValue('collected.xlsx');
   const scoringReport = await kv.getValue('scoring_report.json');
 
   const toEmail = String(notifyCfg.toEmail || '').trim();
@@ -67,8 +69,8 @@ Actor.main(async () => {
 
   const sendEvenIfEmpty = notifyCfg.sendEvenIfEmpty !== false;
 
-  if (!acceptedCsv && !sendEvenIfEmpty) {
-    log.info('No accepted.csv found and sendEvenIfEmpty=false; skipping email.');
+  if (!acceptedXlsx && !sendEvenIfEmpty) {
+    log.info('No accepted.xlsx found and sendEvenIfEmpty=false; skipping email.');
     await kv.setValue('notify_report.json', { status: 'skipped_no_results', at: nowIso() });
     return;
   }
@@ -82,19 +84,33 @@ Actor.main(async () => {
       <p><b>Accepted:</b> ${acceptedCount}<br/>
          <b>Scored:</b> ${totalScored}</p>
       ${diagnosticsUrl ? `<p>Diagnostics: <a href="${diagnosticsUrl}">${diagnosticsUrl}</a></p>` : ''}
-      <p>See attached <code>accepted.csv</code>.</p>
+      <p>See attached spreadsheets: <code>accepted.xlsx</code> (top picks), <code>scored.xlsx</code> (all scored jobs), <code>collected.xlsx</code> (raw collected).</p>
       <hr/>
       <p style="color:#666;font-size:12px;">Sent at ${nowIso()}</p>
     </div>
   `.trim();
 
   // apify/send-mail expects base64 data for attachments
-  const attachments = [
-    {
-      filename: 'accepted.csv',
-      data: b64(acceptedCsv || 'score,company,title\n'),
-    },
-  ];
+  // XLSX files from KV store are already Buffer objects
+  function xlsxToBase64(buf) {
+    if (!buf) return '';
+    if (Buffer.isBuffer(buf)) return buf.toString('base64');
+    if (buf instanceof ArrayBuffer) return Buffer.from(buf).toString('base64');
+    if (typeof buf === 'string') return Buffer.from(buf, 'utf-8').toString('base64');
+    // Could be Uint8Array or similar
+    return Buffer.from(buf).toString('base64');
+  }
+
+  const attachments = [];
+  if (acceptedXlsx) {
+    attachments.push({ filename: 'accepted.xlsx', data: xlsxToBase64(acceptedXlsx) });
+  }
+  if (scoredXlsx) {
+    attachments.push({ filename: 'scored.xlsx', data: xlsxToBase64(scoredXlsx) });
+  }
+  if (collectedXlsx) {
+    attachments.push({ filename: 'collected.xlsx', data: xlsxToBase64(collectedXlsx) });
+  }
 
   const mailInput = {
     to: toEmail,

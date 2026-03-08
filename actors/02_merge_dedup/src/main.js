@@ -69,14 +69,50 @@ function canonicalizeUrl(u) {
   }
 }
 
-function makeKey(job) {
+// Normalize company name for fuzzy dedup across sources
+function normalizeCompany(name) {
+  if (!name) return '';
+  return String(name)
+    .toLowerCase()
+    .replace(/\b(inc|llc|corp|ltd|co|studios|studio|games|entertainment|interactive|digital|group|holdings|technologies|technology|the)\b/gi, '')
+    .replace(/[^a-z0-9]/g, '')   // strip all punctuation/spaces
+    .trim();
+}
+
+// Normalize title for fuzzy dedup across sources
+function normalizeTitle(title) {
+  if (!title) return '';
+  return String(title)
+    .toLowerCase()
+    .replace(/\s*\([^)]*\)\s*/g, ' ')       // strip parentheticals like (Remote), (Full-time)
+    .replace(/[,\-–—:\/|]/g, ' ')            // normalize separators to spaces
+    .replace(/\s+/g, ' ')                     // collapse whitespace
+    .trim();
+}
+
+// Generate multiple dedup keys per job for cross-source matching
+function makeKeys(job) {
+  const keys = [];
+
+  // URL-based key (catches exact same listing URL)
   const url = canonicalizeUrl(job.applyUrl || job.url);
-  if (url) return `url:${url}`;
-  if (job.source && job.sourceJobId) return `id:${job.source}:${job.sourceJobId}`;
-  const t = (job.title || '').toLowerCase().trim();
-  const c = (job.company || '').toLowerCase().trim();
-  const l = (job.location || '').toLowerCase().trim();
-  return `fuzzy:${c}|${t}|${l}`;
+  if (url) keys.push(`url:${url}`);
+
+  // Source-specific ID key
+  if (job.source && job.sourceJobId) keys.push(`id:${job.source}:${job.sourceJobId}`);
+
+  // Company + Title key (catches same job across different sources)
+  const c = normalizeCompany(job.company);
+  const t = normalizeTitle(job.title);
+  if (c && t) keys.push(`ct:${c}|${t}`);
+
+  // Fallback: if nothing else, use fuzzy location-inclusive key
+  if (keys.length === 0) {
+    const loc = (job.location || '').toLowerCase().trim();
+    keys.push(`fuzzy:${(job.company || '').toLowerCase().trim()}|${(job.title || '').toLowerCase().trim()}|${loc}`);
+  }
+
+  return keys;
 }
 
 function isLinkedInUrl(u) {
@@ -117,10 +153,20 @@ function mergeTwo(a, b, preferLinkedInApply) {
   // Fill blanks
   merged.title = merged.title || b.title || '';
   merged.company = merged.company || b.company || '';
+  merged.companyUrl = merged.companyUrl || b.companyUrl || '';
   merged.location = merged.location || b.location || '';
   merged.postedAt = merged.postedAt || b.postedAt || '';
   merged.salary = merged.salary || b.salary || '';
   merged.employmentType = merged.employmentType || b.employmentType || '';
+
+  // Track the earliest postedAt across all merged sources (for "Age (days)")
+  const aPosted = a.earliestPostedAt || a.postedAt || '';
+  const bPosted = b.earliestPostedAt || b.postedAt || '';
+  if (aPosted && bPosted) {
+    merged.earliestPostedAt = aPosted < bPosted ? aPosted : bPosted;
+  } else {
+    merged.earliestPostedAt = aPosted || bPosted || '';
+  }
 
   // Preserve raw examples (keep only one or two)
   merged.rawExamples = merged.rawExamples || [];
@@ -160,7 +206,9 @@ Actor.main(async () => {
   const maxItems = Number(config?.run?.maxTotalItems || rawInfo.itemCount || 5000) || 5000;
   const pageSize = 250;
 
-  const seen = new Map(); // key -> merged job
+  const groups = new Map();       // groupId -> merged job
+  const keyToGroup = new Map();   // dedupKey -> groupId
+  let nextGroupId = 0;
   let scanned = 0;
   let duplicates = 0;
 
@@ -170,30 +218,48 @@ Actor.main(async () => {
 
     for (const job of items) {
       scanned += 1;
-      const key = makeKey(job);
+      const keys = makeKeys(job);
 
-      if (!seen.has(key)) {
-        // First time
+      // Check if ANY key matches an existing group
+      let matchedGroupId = null;
+      let matchedKey = null;
+      for (const k of keys) {
+        if (keyToGroup.has(k)) {
+          matchedGroupId = keyToGroup.get(k);
+          matchedKey = k;
+          break;
+        }
+      }
+
+      if (matchedGroupId != null) {
+        // Merge with existing group
+        duplicates += 1;
+        const existing = groups.get(matchedGroupId);
+        const merged = mergeTwo(existing, job, preferLinkedInApply);
+        groups.set(matchedGroupId, merged);
+        // Register ALL of this job's keys so future matches also find this group
+        for (const k of keys) keyToGroup.set(k, matchedGroupId);
+        log.info(`Dedup match [${matchedKey}]: "${job.title}" at "${job.company}" (source=${job.source})`);
+      } else {
+        // New group
+        const groupId = nextGroupId++;
         const base = {
           ...job,
-          key,
+          key: keys[0],
           sources: [job.source].filter(Boolean),
           urls: [job.url].filter(Boolean),
           applyUrls: [job.applyUrl].filter(Boolean),
+          earliestPostedAt: job.postedAt || '',
           mergedAt: nowIso(),
         };
-        seen.set(key, base);
-      } else {
-        duplicates += 1;
-        const existing = seen.get(key);
-        const merged = mergeTwo(existing, job, preferLinkedInApply);
-        seen.set(key, merged);
+        groups.set(groupId, base);
+        for (const k of keys) keyToGroup.set(k, groupId);
       }
     }
   }
 
   // Push merged
-  const mergedJobs = Array.from(seen.values());
+  const mergedJobs = Array.from(groups.values());
 
   const batchSize = 200;
   for (let i = 0; i < mergedJobs.length; i += batchSize) {
