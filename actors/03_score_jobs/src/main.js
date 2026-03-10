@@ -574,17 +574,30 @@ function setCellHyperlink(cell, url, text) {
  * For accepted jobs without LinkedIn URLs, search LinkedIn's public guest page
  * and swap in the LinkedIn URL if the same job is found.
  * Fallback: keep existing URL (Indeed, Greenhouse, etc.).
- * Returns the number of jobs enriched with LinkedIn URLs.
+ *
+ * Uses a persistent cache (linkedinUrlCache) keyed by normalizedCompany|normalizedTitle
+ * to avoid re-searching LinkedIn for the same job on subsequent runs.
+ * Cache stores the LinkedIn URL if found, or null if confirmed not on LinkedIn.
+ *
+ * Returns { enrichedCount, linkedinUrlCache } — the updated cache to persist.
  */
-async function enrichLinkedInUrls(acceptedJobs) {
+async function enrichLinkedInUrls(acceptedJobs, prevLinkedinUrlCache) {
   const isLiUrl = (u) => /linkedin\.com\/jobs/i.test(String(u || ''));
+  const cache = { ...(prevLinkedinUrlCache || {}) }; // copy — will be persisted
 
   const nonLinkedin = acceptedJobs.filter(
     (j) => j?.evaluation?.accepted && !isLiUrl(j.applyUrl) && !isLiUrl(j.url)
   );
-  if (nonLinkedin.length === 0) return 0;
+  if (nonLinkedin.length === 0) return { enrichedCount: 0, linkedinUrlCache: cache };
 
-  log.info(`LinkedIn enrichment: searching LinkedIn for ${nonLinkedin.length} non-LinkedIn accepted jobs…`);
+  log.info(`LinkedIn enrichment: ${nonLinkedin.length} non-LinkedIn accepted jobs. Cache has ${Object.keys(cache).length} entries.`);
+
+  // Cache key: same normalizeCompany+normalizeTitle used by the score cache
+  function liCacheKey(job) {
+    const c = normalizeCompany(job.company);
+    const t = normalizeTitle(job.title);
+    return (c && t) ? `${c}|${t}` : '';
+  }
 
   // Normalize company name to a slug fragment for matching LinkedIn URL patterns
   // LinkedIn URLs use: /jobs/view/{title-slug}-at-{company-slug}-{id}
@@ -618,11 +631,36 @@ async function enrichLinkedInUrls(acceptedJobs) {
   }
 
   let enrichedCount = 0;
+  let cacheHitCount = 0;
+  const toSearch = []; // jobs that need a live LinkedIn search
 
-  // Process in batches of 5 to be polite to LinkedIn
+  // Phase 1: check cache
+  for (const job of nonLinkedin) {
+    const key = liCacheKey(job);
+    if (!key) { toSearch.push(job); continue; }
+
+    if (key in cache) {
+      cacheHitCount++;
+      const cachedUrl = cache[key];
+      if (cachedUrl) {
+        job.applyUrl = cachedUrl;
+        enrichedCount++;
+        log.info(`LinkedIn enriched (cached): "${job.title}" at ${job.company}`);
+      }
+      // cachedUrl === null means "confirmed not on LinkedIn" — skip
+    } else {
+      toSearch.push(job);
+    }
+  }
+
+  if (cacheHitCount > 0) {
+    log.info(`LinkedIn cache: ${cacheHitCount} hits, ${toSearch.length} new searches needed.`);
+  }
+
+  // Phase 2: search LinkedIn for uncached jobs
   const BATCH_SIZE = 5;
-  for (let i = 0; i < nonLinkedin.length; i += BATCH_SIZE) {
-    const batch = nonLinkedin.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < toSearch.length; i += BATCH_SIZE) {
+    const batch = toSearch.slice(i, i + BATCH_SIZE);
     const searches = await Promise.all(
       batch.map((j) => searchLinkedIn(j.title || '', j.company || ''))
     );
@@ -630,35 +668,41 @@ async function enrichLinkedInUrls(acceptedJobs) {
     for (let k = 0; k < batch.length; k++) {
       const job = batch[k];
       const urls = searches[k];
-      if (urls.length === 0) continue;
+      const key = liCacheKey(job);
+
+      if (urls.length === 0) {
+        if (key) cache[key] = null; // remember: not on LinkedIn
+        continue;
+      }
 
       const slug = companySlug(job.company);
-      if (!slug) continue;
+      if (!slug) { if (key) cache[key] = null; continue; }
 
       // Find a URL whose slug contains the company name after "-at-"
       const match = urls.find((u) => {
         const lower = u.toLowerCase();
-        // Match "-at-{company}-" or "-at-{company}" at end
         return lower.includes(`-at-${slug}-`) || lower.endsWith(`-at-${slug}`);
       });
 
       if (match) {
-        // Clean off any trailing URL fragments that were part of the HTML attribute
         const cleanUrl = match.split(/['">\s]/)[0];
         log.info(`LinkedIn enriched: "${job.title}" at ${job.company} → ${cleanUrl}`);
         job.applyUrl = cleanUrl;
         enrichedCount++;
+        if (key) cache[key] = cleanUrl;
+      } else {
+        if (key) cache[key] = null; // company found on LinkedIn but no matching job
       }
     }
 
     // Delay between batches
-    if (i + BATCH_SIZE < nonLinkedin.length) {
+    if (i + BATCH_SIZE < toSearch.length) {
       await new Promise((r) => setTimeout(r, 2000));
     }
   }
 
-  log.info(`LinkedIn enrichment: ${enrichedCount} of ${nonLinkedin.length} jobs matched on LinkedIn.`);
-  return enrichedCount;
+  log.info(`LinkedIn enrichment: ${enrichedCount} of ${nonLinkedin.length} enriched (${cacheHitCount} cached, ${toSearch.length} searched).`);
+  return { enrichedCount, linkedinUrlCache: cache };
 }
 
 // Build an XLSX workbook buffer from an array of scored jobs
@@ -1203,7 +1247,9 @@ Actor.main(async () => {
 
   // 3) LinkedIn URL enrichment — for accepted jobs without LinkedIn URLs,
   //    search LinkedIn's public guest page to find the same job and swap in the LinkedIn URL.
-  const linkedinEnrichCount = await enrichLinkedInUrls(acceptedJobs);
+  //    Uses a persistent cache to avoid re-searching LinkedIn for known jobs.
+  const { enrichedCount: linkedinEnrichCount, linkedinUrlCache } =
+    await enrichLinkedInUrls(acceptedJobs, scoreCache?.linkedinUrlCache);
 
   // Build accepted.xlsx + scored.xlsx (Excel format with hyperlinks, frozen panes, bold headers)
   const xlsxContentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -1317,6 +1363,7 @@ Actor.main(async () => {
     rubricVersion: currentRubricVersion,
     scoredDatasetName,
     mantikIds,
+    linkedinUrlCache: linkedinUrlCache || {},
     cachedAt: nowIso(),
   });
 
