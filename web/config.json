@@ -115,7 +115,7 @@
       "requiredEnv": ["RAPIDAPI_KEY"],
       "query": "unity developer",
       "locality": "us",
-      "pages": 2
+      "pages": 50
     },
     {
       "id": "mantiks_game_designer",
@@ -124,7 +124,7 @@
       "requiredEnv": ["RAPIDAPI_KEY"],
       "query": "game designer",
       "locality": "us",
-      "pages": 2
+      "pages": 50
     }
   ],
   "merge": {

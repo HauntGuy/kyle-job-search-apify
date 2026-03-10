@@ -46,7 +46,7 @@ function getEnvOrNull(name) {
 // the second source's first request can 429.  This module-level throttle
 // enforces a minimum gap between RapidAPI HTTP calls.
 let _lastRapidApiCallMs = 0;
-const RAPIDAPI_GAP_MS = 5000; // 5 seconds between RapidAPI fetches
+const RAPIDAPI_GAP_MS = 2000; // 2 seconds between RapidAPI fetches (Ultra plan: 10 req/min)
 
 async function rapidApiThrottle(sourceId) {
   if (_lastRapidApiCallMs > 0) {
