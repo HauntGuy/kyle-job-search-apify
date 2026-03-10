@@ -3,20 +3,20 @@
   "kvStoreName": "job-pipeline-v3",
   "datasetPrefix": "jobsearch-v3",
   "run": {
-    "maxItemsPerSource": 500,
+    "maxItemsPerSource": 1200,
     "maxTotalItems": 5000,
     "stopOnCollectorErrors": false
   },
   "sources": [
     {
-      "id": "fantastic_unity",
+      "id": "fantastic_nationwide",
       "type": "apify_actor",
       "enabled": true,
       "actorId": "fantastic-jobs/career-site-job-listing-feed",
       "adapter": "fantastic_feed",
       "input": {
-        "limit": 500,
-        "titleSearch": ["Unity"],
+        "limit": 1000,
+        "titleSearch": ["Unity", "Game Developer", "Game Programmer", "Game Designer"],
         "locationSearch": ["United States"],
         "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
         "descriptionType": "text",
@@ -27,321 +27,61 @@
       }
     },
     {
-      "id": "linkedin_unity",
+      "id": "fantastic_ma",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/career-site-job-listing-feed",
+      "adapter": "fantastic_feed",
+      "input": {
+        "limit": 1000,
+        "titleSearch": [
+          "Implementation Specialist", "Implementation Consultant", "Onboarding Specialist",
+          "Customer Success", "Technical Account",
+          "Sales Engineer",
+          "Client Success",
+          "Technical Support Engineer", "Support Engineer", "Product Support Engineer", "Application Support",
+          "Solutions Engineer", "Solutions Consultant", "Technical Solutions"
+        ],
+        "locationSearch": ["Massachusetts"],
+        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
+        "descriptionType": "text",
+        "includeAi": true,
+        "includeLinkedIn": true,
+        "includeJobAggregator": true,
+        "makeRecordsUnique": true
+      }
+    },
+    {
+      "id": "linkedin_nationwide",
       "type": "apify_actor",
       "enabled": true,
       "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
       "adapter": "linkedin_generic",
       "input": {
-        "timeRange": "7d",
-        "limit": 300,
-        "titleSearch": ["Unity"],
+        "timeRange": "6m",
+        "limit": 1000,
+        "titleSearch": ["Unity", "Game Developer", "Game Programmer", "Game Designer"],
         "locationSearch": ["United States"],
         "descriptionType": "text"
       }
     },
     {
-      "id": "fantastic_csharp",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/career-site-job-listing-feed",
-      "adapter": "fantastic_feed",
-      "input": {
-        "limit": 300,
-        "titleSearch": ["C#"],
-        "locationSearch": ["Massachusetts"],
-        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
-        "descriptionType": "text",
-        "includeAi": true,
-        "includeLinkedIn": true,
-        "includeJobAggregator": true,
-        "makeRecordsUnique": true
-      }
-    },
-    {
-      "id": "fantastic_csharp_remote",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/career-site-job-listing-feed",
-      "adapter": "fantastic_feed",
-      "input": {
-        "limit": 300,
-        "titleSearch": ["C#"],
-        "locationSearch": ["United States"],
-        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely"],
-        "descriptionType": "text",
-        "includeAi": true,
-        "includeLinkedIn": true,
-        "includeJobAggregator": true,
-        "makeRecordsUnique": true
-      }
-    },
-    {
-      "id": "fantastic_implementation",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/career-site-job-listing-feed",
-      "adapter": "fantastic_feed",
-      "input": {
-        "limit": 300,
-        "titleSearch": ["Implementation Specialist", "Implementation Consultant", "Onboarding Specialist"],
-        "locationSearch": ["Massachusetts"],
-        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
-        "descriptionType": "text",
-        "includeAi": true,
-        "includeLinkedIn": true,
-        "includeJobAggregator": true,
-        "makeRecordsUnique": true
-      }
-    },
-    {
-      "id": "fantastic_customer_success",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/career-site-job-listing-feed",
-      "adapter": "fantastic_feed",
-      "input": {
-        "limit": 300,
-        "titleSearch": ["Customer Success Manager", "Customer Success Engineer", "Technical Account Manager"],
-        "locationSearch": ["Massachusetts"],
-        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
-        "descriptionType": "text",
-        "includeAi": true,
-        "includeLinkedIn": true,
-        "includeJobAggregator": true,
-        "makeRecordsUnique": true
-      }
-    },
-    {
-      "id": "fantastic_sales_engineer",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/career-site-job-listing-feed",
-      "adapter": "fantastic_feed",
-      "input": {
-        "limit": 300,
-        "titleSearch": ["Sales Engineer"],
-        "locationSearch": ["Massachusetts"],
-        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
-        "descriptionType": "text",
-        "includeAi": true,
-        "includeLinkedIn": true,
-        "includeJobAggregator": true,
-        "makeRecordsUnique": true
-      }
-    },
-    {
-      "id": "fantastic_client_success",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/career-site-job-listing-feed",
-      "adapter": "fantastic_feed",
-      "input": {
-        "limit": 300,
-        "titleSearch": ["Client Success"],
-        "locationSearch": ["Massachusetts"],
-        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
-        "descriptionType": "text",
-        "includeAi": true,
-        "includeLinkedIn": true,
-        "includeJobAggregator": true,
-        "makeRecordsUnique": true
-      }
-    },
-    {
-      "id": "fantastic_impl_manager",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/career-site-job-listing-feed",
-      "adapter": "fantastic_feed",
-      "input": {
-        "limit": 300,
-        "titleSearch": ["Implementation Manager"],
-        "locationSearch": ["Massachusetts"],
-        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
-        "descriptionType": "text",
-        "includeAi": true,
-        "includeLinkedIn": true,
-        "includeJobAggregator": true,
-        "makeRecordsUnique": true
-      }
-    },
-    {
-      "id": "fantastic_support",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/career-site-job-listing-feed",
-      "adapter": "fantastic_feed",
-      "input": {
-        "limit": 300,
-        "titleSearch": ["Technical Support Engineer", "Support Engineer", "Product Support Engineer", "Application Support"],
-        "locationSearch": ["Massachusetts"],
-        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
-        "descriptionType": "text",
-        "includeAi": true,
-        "includeLinkedIn": true,
-        "includeJobAggregator": true,
-        "makeRecordsUnique": true
-      }
-    },
-    {
-      "id": "fantastic_solutions",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/career-site-job-listing-feed",
-      "adapter": "fantastic_feed",
-      "input": {
-        "limit": 300,
-        "titleSearch": ["Solutions Engineer", "Solutions Consultant", "Technical Solutions"],
-        "locationSearch": ["Massachusetts"],
-        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
-        "descriptionType": "text",
-        "includeAi": true,
-        "includeLinkedIn": true,
-        "includeJobAggregator": true,
-        "makeRecordsUnique": true
-      }
-    },
-    {
-      "id": "fantastic_gamedev",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/career-site-job-listing-feed",
-      "adapter": "fantastic_feed",
-      "input": {
-        "limit": 300,
-        "titleSearch": ["Game Developer", "Game Programmer", "Game Designer"],
-        "locationSearch": ["United States"],
-        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
-        "descriptionType": "text",
-        "includeAi": true,
-        "includeLinkedIn": true,
-        "includeJobAggregator": true,
-        "makeRecordsUnique": true
-      }
-    },
-    {
-      "id": "linkedin_csharp",
+      "id": "linkedin_ma",
       "type": "apify_actor",
       "enabled": true,
       "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
       "adapter": "linkedin_generic",
       "input": {
         "timeRange": "6m",
-        "limit": 200,
-        "titleSearch": ["C#"],
-        "locationSearch": ["Massachusetts"],
-        "descriptionType": "text"
-      }
-    },
-    {
-      "id": "linkedin_gamedev",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
-      "adapter": "linkedin_generic",
-      "input": {
-        "timeRange": "6m",
-        "limit": 200,
-        "titleSearch": ["Game Developer", "Game Programmer", "Game Designer"],
-        "locationSearch": ["United States"],
-        "descriptionType": "text"
-      }
-    },
-    {
-      "id": "linkedin_implementation",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
-      "adapter": "linkedin_generic",
-      "input": {
-        "timeRange": "6m",
-        "limit": 200,
-        "titleSearch": ["Implementation Specialist", "Implementation Consultant", "Onboarding Specialist"],
-        "locationSearch": ["Massachusetts"],
-        "descriptionType": "text"
-      }
-    },
-    {
-      "id": "linkedin_customer_success",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
-      "adapter": "linkedin_generic",
-      "input": {
-        "timeRange": "6m",
-        "limit": 200,
-        "titleSearch": ["Customer Success Manager", "Customer Success Engineer", "Technical Account Manager"],
-        "locationSearch": ["Massachusetts"],
-        "descriptionType": "text"
-      }
-    },
-    {
-      "id": "linkedin_support",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
-      "adapter": "linkedin_generic",
-      "input": {
-        "timeRange": "6m",
-        "limit": 200,
-        "titleSearch": ["Technical Support Engineer", "Support Engineer", "Product Support Engineer", "Application Support"],
-        "locationSearch": ["Massachusetts"],
-        "descriptionType": "text"
-      }
-    },
-    {
-      "id": "linkedin_solutions",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
-      "adapter": "linkedin_generic",
-      "input": {
-        "timeRange": "6m",
-        "limit": 200,
-        "titleSearch": ["Solutions Engineer", "Solutions Consultant", "Technical Solutions"],
-        "locationSearch": ["Massachusetts"],
-        "descriptionType": "text"
-      }
-    },
-    {
-      "id": "linkedin_sales_engineer",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
-      "adapter": "linkedin_generic",
-      "input": {
-        "timeRange": "6m",
-        "limit": 200,
-        "titleSearch": ["Sales Engineer"],
-        "locationSearch": ["Massachusetts"],
-        "descriptionType": "text"
-      }
-    },
-    {
-      "id": "linkedin_client_success",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
-      "adapter": "linkedin_generic",
-      "input": {
-        "timeRange": "6m",
-        "limit": 200,
-        "titleSearch": ["Client Success"],
-        "locationSearch": ["Massachusetts"],
-        "descriptionType": "text"
-      }
-    },
-    {
-      "id": "linkedin_impl_manager",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
-      "adapter": "linkedin_generic",
-      "input": {
-        "timeRange": "6m",
-        "limit": 200,
-        "titleSearch": ["Implementation Manager"],
+        "limit": 1000,
+        "titleSearch": [
+          "Implementation Specialist", "Implementation Consultant", "Onboarding Specialist",
+          "Customer Success", "Technical Account",
+          "Sales Engineer",
+          "Client Success",
+          "Technical Support Engineer", "Support Engineer", "Product Support Engineer", "Application Support",
+          "Solutions Engineer", "Solutions Consultant", "Technical Solutions"
+        ],
         "locationSearch": ["Massachusetts"],
         "descriptionType": "text"
       }
@@ -349,7 +89,7 @@
     {
       "id": "remotive",
       "type": "remotive",
-      "enabled": false,
+      "enabled": true,
       "query": "unity developer",
       "limit": 200
     },
@@ -361,12 +101,30 @@
     {
       "id": "rapidapi_jsearch",
       "type": "rapidapi_jsearch",
-      "enabled": false,
+      "enabled": true,
       "requiredEnv": ["RAPIDAPI_KEY"],
       "query": "unity developer in united states",
       "page": 1,
       "num_pages": 1,
       "date_posted": "month"
+    },
+    {
+      "id": "mantiks_unity",
+      "type": "rapidapi_mantiks",
+      "enabled": true,
+      "requiredEnv": ["RAPIDAPI_KEY"],
+      "query": "unity developer",
+      "locality": "us",
+      "pages": 2
+    },
+    {
+      "id": "mantiks_game_designer",
+      "type": "rapidapi_mantiks",
+      "enabled": true,
+      "requiredEnv": ["RAPIDAPI_KEY"],
+      "query": "game designer",
+      "locality": "us",
+      "pages": 2
     }
   ],
   "merge": {
@@ -374,7 +132,7 @@
   },
   "scoring": {
     "enabled": true,
-    "model": "gpt-4o-mini",
+    "model": "gpt-4.1-mini",
     "threshold": 70,
     "gateOnLocation": false,
     "concurrency": 8,

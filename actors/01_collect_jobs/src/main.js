@@ -40,6 +40,29 @@ function getEnvOrNull(name) {
   return String(v);
 }
 
+// --------------- RapidAPI rate-limit throttle ---------------
+// The free RapidAPI plan has per-minute rate limits.  When two RapidAPI-backed
+// sources fire back-to-back (e.g. indeed_unity then indeed_game_designer),
+// the second source's first request can 429.  This module-level throttle
+// enforces a minimum gap between RapidAPI HTTP calls.
+let _lastRapidApiCallMs = 0;
+const RAPIDAPI_GAP_MS = 5000; // 5 seconds between RapidAPI fetches
+
+async function rapidApiThrottle(sourceId) {
+  if (_lastRapidApiCallMs > 0) {
+    const elapsed = Date.now() - _lastRapidApiCallMs;
+    if (elapsed < RAPIDAPI_GAP_MS) {
+      const wait = RAPIDAPI_GAP_MS - elapsed;
+      log.info(`[${sourceId}] RapidAPI throttle: waiting ${wait}ms before next call…`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+}
+
+function rapidApiTick() {
+  _lastRapidApiCallMs = Date.now();
+}
+
 function requireEnvs(required = []) {
   const missing = [];
   for (const k of required) {
@@ -121,7 +144,9 @@ function normalizeFantasticFeed(sourceId, raw) {
   const company = firstString(raw.organization, raw.company, raw.company_name);
   const url = firstString(raw.url, raw.job_url);
   const applyUrl = firstString(raw.apply_url, raw.applyUrl, raw.apply_link, raw.application_url, url);
-  const companyUrl = firstString(raw.organization_url, raw.company_url, raw.company_website, raw.employer_website);
+  // linkedin_org_url is the actual company website (from LinkedIn profiles);
+  // organization_url can be a linkedin.com/company page for LinkedIn sources
+  const companyUrl = firstString(raw.linkedin_org_url, raw.organization_url, raw.company_url, raw.company_website, raw.employer_website);
 
   const locationsDerived = asArray(raw.locations_derived).filter(Boolean);
   const locationsRaw = asArray(raw.locations_raw).filter(Boolean);
@@ -299,7 +324,7 @@ async function runApifyActorSource(source, globalMaxItemsPerSource, remaining) {
 
   const adapter = String(source.adapter || 'generic');
   const jobs = rawItems.map((it) => {
-    if (adapter === 'fantastic_feed') return normalizeFantasticFeed(source.id, it);
+    if (adapter === 'fantastic_feed' || adapter === 'linkedin_generic') return normalizeFantasticFeed(source.id, it);
     if (adapter === 'jsearch') return normalizeJSearch(source.id, it);
     return normalizeGeneric(source.id, it);
   });
@@ -341,10 +366,12 @@ async function runRapidApiJSearch(source) {
   const url = `https://jsearch.p.rapidapi.com/search?${params.toString()}`;
   log.info(`[${source.id}] GET ${url}`);
 
+  await rapidApiThrottle(source.id);
   const json = await fetchJson(url, {
     'X-RapidAPI-Key': apiKey,
     'X-RapidAPI-Host': 'jsearch.p.rapidapi.com',
   });
+  rapidApiTick();
 
   const items = Array.isArray(json?.data) ? json.data : [];
   const jobs = items.map((it) => normalizeJSearch(source.id, it));
@@ -379,12 +406,136 @@ async function runRemoteOk(source) {
   return { jobs, meta: { itemCount: jobs.length } };
 }
 
-async function runSource(source, config, remaining) {
+// --------------- Mantiks Indeed API (indeed12.p.rapidapi.com) ---------------
+
+function normalizeMantiks(sourceId, hit, detail) {
+  const d = detail || {};
+  const title = firstString(d.title, hit.title);
+  const company = firstString(d.company_name, hit.company_name, d.company, hit.company);
+  const location = firstString(d.location, hit.location);
+  const url = firstString(d.url, hit.url, d.link, hit.link);
+  const salary = firstString(d.salary_text, hit.salary_text, d.salary, hit.salary);
+  const postedAt = firstString(d.date_posted, hit.date_posted, d.posted_at, hit.posted_at);
+  const companyUrl = firstString(d.company_url, hit.company_url);
+
+  // Strip HTML tags from description
+  let description = firstString(d.description, hit.description);
+  if (description) {
+    description = description.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 15000);
+  }
+
+  return {
+    source: sourceId,
+    fetchedAt: nowIso(),
+    title,
+    company,
+    companyUrl: canonicalizeUrl(companyUrl),
+    location,
+    url: canonicalizeUrl(url),
+    applyUrl: canonicalizeUrl(url),
+    postedAt: toIsoOrEmpty(postedAt),
+    description: description || '',
+    salary,
+    sourceJobId: String(hit.id || ''),
+    raw: hit,
+  };
+}
+
+async function runRapidApiMantiks(source, knownMantikIds) {
+  const apiKey = getEnvOrNull('RAPIDAPI_KEY');
+  if (!apiKey) throw new Error(`[${source.id}] Missing RAPIDAPI_KEY env var`);
+
+  const query = String(source.query || '').trim();
+  if (!query) throw new Error(`[${source.id}] Missing source.query`);
+
+  const location = String(source.location || '').trim();
+  const locality = String(source.locality || 'us').trim();
+  const maxPages = Number(source.pages || 1) || 1;
+  const knownIds = knownMantikIds || new Set();
+
+  // --- Search phase: discover jobs ---
+  const allHits = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const params = new URLSearchParams({
+      query,
+      page: String(page),
+      locality,
+    });
+    if (location) params.set('location', location);
+
+    const url = `https://indeed12.p.rapidapi.com/jobs/search?${params.toString()}`;
+    log.info(`[${source.id}] GET ${url} (page ${page}/${maxPages})`);
+
+    await rapidApiThrottle(source.id);
+    const json = await fetchJson(url, {
+      'X-RapidAPI-Key': apiKey,
+      'X-RapidAPI-Host': 'indeed12.p.rapidapi.com',
+    });
+    rapidApiTick();
+
+    // Handle both array and wrapped response formats
+    const hits = Array.isArray(json) ? json : (json?.hits || json?.results || json?.data || []);
+    if (hits.length === 0) break;
+    allHits.push(...hits);
+  }
+
+  log.info(`[${source.id}] Search returned ${allHits.length} results. Fetching details for new jobs…`);
+
+  // --- Detail phase: fetch full descriptions for NEW jobs only ---
+  let detailsFetched = 0;
+  let detailsSkipped = 0;
+  const detailMap = new Map(); // id → detail object
+
+  for (const hit of allHits) {
+    const id = String(hit.id || '').trim();
+    if (!id) continue;
+
+    if (knownIds.has(id)) {
+      detailsSkipped++;
+      continue;
+    }
+
+    try {
+      await rapidApiThrottle(source.id);
+      const detailUrl = `https://indeed12.p.rapidapi.com/job/${encodeURIComponent(id)}?locality=${locality}`;
+      log.info(`[${source.id}] Detail: ${detailUrl}`);
+      const detail = await fetchJson(detailUrl, {
+        'X-RapidAPI-Key': apiKey,
+        'X-RapidAPI-Host': 'indeed12.p.rapidapi.com',
+      });
+      rapidApiTick();
+      detailMap.set(id, detail);
+      detailsFetched++;
+    } catch (err) {
+      rapidApiTick();
+      log.warning(`[${source.id}] Detail fetch failed for id=${id}: ${err?.message || err}`);
+    }
+  }
+
+  log.info(`[${source.id}] Details: ${detailsFetched} fetched, ${detailsSkipped} skipped (cached).`);
+
+  const jobs = allHits.map((hit) => {
+    const detail = detailMap.get(String(hit.id || '').trim()) || null;
+    return normalizeMantiks(source.id, hit, detail);
+  });
+
+  return {
+    jobs,
+    meta: {
+      itemCount: jobs.length,
+      detailsFetched,
+      detailsSkipped,
+    },
+  };
+}
+
+async function runSource(source, config, remaining, knownMantikIds) {
   const globalMax = Number(config?.run?.maxItemsPerSource || 300) || 300;
   const type = String(source.type || '').toLowerCase();
 
   if (type === 'apify_actor') return await runApifyActorSource(source, globalMax, remaining);
   if (type === 'rapidapi_jsearch') return await runRapidApiJSearch(source);
+  if (type === 'rapidapi_mantiks') return await runRapidApiMantiks(source, knownMantikIds);
   if (type === 'remotive') return await runRemotive(source);
   if (type === 'remoteok') return await runRemoteOk(source);
 
@@ -398,14 +549,26 @@ function collectedFriendlySource(sourceId) {
   const s = String(sourceId);
   if (s.startsWith('fantastic_')) return 'Fantastic';
   if (s.startsWith('linkedin_')) return 'LinkedIn';
+  if (s.startsWith('mantiks_')) return 'Mantiks';
   const map = {
     'fantastic_feed': 'Fantastic',
     'linkedin_jobs': 'LinkedIn',
     'remotive': 'Remotive',
     'remoteok': 'RemoteOK',
     'rapidapi_jsearch': 'JSearch',
+    'rapidapi_mantiks': 'Mantiks',
   };
   return map[s] || s;
+}
+
+function jobIdPrefix(sourceId) {
+  const s = String(sourceId || '');
+  if (s.startsWith('fantastic_')) return 'F';
+  if (s.startsWith('linkedin_')) return 'L';
+  if (s.startsWith('mantiks_')) return 'M';
+  if (s === 'rapidapi_jsearch') return 'J';
+  if (s === 'remotive') return 'R';
+  return '?';
 }
 
 function ensureProtocol(url) {
@@ -440,6 +603,7 @@ async function buildCollectedXlsx(jobs) {
     { header: 'Posted At',    width: 22 },
     { header: 'URL',          width: 50 },
     { header: 'Search Terms', width: 40 },
+    { header: 'Job IDs',      width: 30 },
   ];
 
   // Bold header row
@@ -449,6 +613,7 @@ async function buildCollectedXlsx(jobs) {
   ws.views = [{ state: 'frozen', xSplit: 2, ySplit: 1 }];
 
   for (const j of jobs) {
+    const jobIdStr = j.sourceJobId ? `${jobIdPrefix(j.source)}:${j.sourceJobId}` : '';
     const row = ws.addRow([
       collectedFriendlySource(j.source),
       j.company || '',
@@ -458,6 +623,7 @@ async function buildCollectedXlsx(jobs) {
       j.postedAt || '',
       j.url || j.applyUrl || '',
       (j.searchTerms || []).join('; '),
+      jobIdStr,
     ]);
 
     // Job Title hyperlink
@@ -477,6 +643,16 @@ Actor.main(async () => {
   const datasetPrefix = input.datasetPrefix || config.datasetPrefix || 'jobsearch-v3';
 
   const kv = await Actor.openKeyValueStore(kvStoreName);
+
+  // Load score cache for Mantiks detail-call skip (reuse previous job details)
+  let knownMantikIds = new Set();
+  try {
+    const scoreCache = await kv.getValue('score_cache.json');
+    if (scoreCache?.mantikIds && Array.isArray(scoreCache.mantikIds)) {
+      knownMantikIds = new Set(scoreCache.mantikIds);
+      log.info(`Loaded ${knownMantikIds.size} cached Mantiks IDs from score_cache.json`);
+    }
+  } catch { /* no cache yet — first run */ }
 
   const rawDatasetName = datasetName(datasetPrefix, 'raw', runId);
   const rawDataset = await Actor.openDataset(rawDatasetName);
@@ -516,7 +692,7 @@ Actor.main(async () => {
     const started = Date.now();
     try {
       const remaining = Math.max(0, maxTotal - allJobs.length);
-      const { jobs, meta } = await runSource(source, config, remaining);
+      const { jobs, meta } = await runSource(source, config, remaining, knownMantikIds);
 
       const remaining2 = Math.max(0, maxTotal - allJobs.length);
       const trimmed = remaining2 > 0 ? jobs.slice(0, remaining2) : [];

@@ -115,6 +115,16 @@ function makeKeys(job) {
   return keys;
 }
 
+function jobIdPrefix(sourceId) {
+  const s = String(sourceId || '');
+  if (s.startsWith('fantastic_')) return 'F';
+  if (s.startsWith('linkedin_')) return 'L';
+  if (s.startsWith('mantiks_')) return 'M';
+  if (s === 'rapidapi_jsearch') return 'J';
+  if (s === 'remotive') return 'R';
+  return '?';
+}
+
 function isLinkedInUrl(u) {
   if (!u) return false;
   return /linkedin\.com\/jobs/i.test(String(u));
@@ -149,6 +159,13 @@ function mergeTwo(a, b, preferLinkedInApply) {
   const searchTerms = new Set([...(a.searchTerms || []), ...(b.searchTerms || [])]);
   merged.searchTerms = Array.from(searchTerms);
 
+  // Union sourceJobIds (prefixed IDs like "F:12345", "L:67890")
+  const aIds = a.sourceJobIds || [];
+  const bIds = (b.sourceJobIds && b.sourceJobIds.length > 0)
+    ? b.sourceJobIds
+    : (b.sourceJobId ? [`${jobIdPrefix(b.source)}:${b.sourceJobId}`] : []);
+  merged.sourceJobIds = Array.from(new Set([...aIds, ...bIds]));
+
   // Prefer longer description
   const descA = a.description || '';
   const descB = b.description || '';
@@ -157,7 +174,14 @@ function mergeTwo(a, b, preferLinkedInApply) {
   // Fill blanks
   merged.title = merged.title || b.title || '';
   merged.company = merged.company || b.company || '';
-  merged.companyUrl = merged.companyUrl || b.companyUrl || '';
+  // Prefer a real company website over a linkedin.com/company page
+  const aCompanyUrl = merged.companyUrl || '';
+  const bCompanyUrl = b.companyUrl || '';
+  const aIsLinkedIn = /linkedin\.com\/company/i.test(aCompanyUrl);
+  const bIsLinkedIn = /linkedin\.com\/company/i.test(bCompanyUrl);
+  if (!aCompanyUrl || (aIsLinkedIn && bCompanyUrl && !bIsLinkedIn)) {
+    merged.companyUrl = bCompanyUrl;
+  }
   merged.location = merged.location || b.location || '';
   merged.postedAt = merged.postedAt || b.postedAt || '';
   merged.salary = merged.salary || b.salary || '';
@@ -254,6 +278,7 @@ Actor.main(async () => {
           urls: [job.url].filter(Boolean),
           applyUrls: [job.applyUrl].filter(Boolean),
           searchTerms: job.searchTerms || [],
+          sourceJobIds: job.sourceJobId ? [`${jobIdPrefix(job.source)}:${job.sourceJobId}`] : [],
           earliestPostedAt: job.postedAt || '',
           mergedAt: nowIso(),
         };

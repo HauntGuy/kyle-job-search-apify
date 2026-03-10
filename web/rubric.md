@@ -1,131 +1,76 @@
-# Rubric: Kyle job search (v5)
+# Rubric: Kyle job search (v13)
 
-You are evaluating a job posting for **Kyle Forgaard**.
+Evaluate a job posting for **Kyle Forgaard**. Return JSON with: `accept` (bool), `score` (0–100), `confidence` (0.0–1.0), `reason_short` (1 sentence), `reasons` (short bullets), `red_flags` (short bullets), `tags` (short tags), `salary_extracted` (string or ""), `company_url` (string or ""), `role` (array from: "Game Designer", "Programmer", "EdTech", "App Support", "Customer Success" — may combine). **`role` rules:** Use "Programmer" ONLY for roles where the primary job duty is writing code (Unity dev, C# dev, gameplay engineer). Solutions Engineer, Sales Engineer, Implementation roles, and Support roles are NOT "Programmer" — classify them as "Customer Success" or "App Support".
 
-Return a JSON object with:
-- `accept` (boolean)
-- `score` (0–100 integer)
-- `confidence` (0.0–1.0)
-- `location_ok` ("yes" | "no" | "unknown")
-- `reason_short` (1 sentence)
-- `reasons` (array of short bullets)
-- `red_flags` (array of short bullets)
-- `tags` (array of short tags)
-- `salary_extracted` (string: salary/compensation info if found anywhere in the posting, e.g. "$90k-$120k" or "Competitive + equity"; empty string if none found)
-- `company_url` (string: the company's homepage URL if found anywhere in the posting, e.g. "https://example.com"; empty string if not found)
-- `role` (array of strings — classify using one or more labels: "Programmer" for Tier 1 developer/engineer roles; "EdTech" for Tier 2 EdTech roles; "App Support" for Tier 2 Application Support roles; "Customer Success" for any other Tier 2 role such as implementation specialist, CSM, TAM, solutions engineer, sales engineer, onboarding, technical support, etc. A job may have multiple labels if it fits multiple categories — e.g. an EdTech implementation role would be ["EdTech", "Customer Success"]. For jobs scoring below 70, use your best judgment on category.)
+Jobs with bad locations have already been filtered out. Do not evaluate location.
+Jobs with "Manager" in the title have already been filtered out. You will not see them.
 
-## Candidate summary
+## Candidate
 
-- 7 years professional experience focused on **Unity + C#**, mostly **client-side gameplay/UI/tools**, mobile/casual games.
-- Some **C++** and **Lua** experience; open to learning more.
-- Unity **2D preferred**, Unity **3D OK** if not "lead/architect/primary technical owner of a large 3D system."
-- Strong at **customer-facing work**: demos, onboarding, support, stakeholder communication.
-- Not a fit for **backend-primary** or **full-stack-primary** roles.
-- Not a fit for **React-heavy** web front-end roles.
-- Not a fit for **Android SDK / native Android game** roles (unless explicitly optional).
-- Not a fit for **C# backend** roles whose primary stack is ASP.NET Core, Entity Framework, Web API, or similar server-side .NET frameworks — even if the title says "C# Developer."
+- **Game design** degree; 7 years in games. Game Designer roles are the best possible fit.
+- 7 years **Unity + C#**, client-side gameplay/UI/tools, mobile/casual games.
+- Some C++ and Lua; open to learning more.
+- Unity 2D preferred; 3D OK if not lead/architect of a large 3D system.
+- **Excels at customer-facing work**: demos, onboarding, support, stakeholder communication.
+- **Entry-level for customer-facing roles.** Kyle has never held a customer success, sales engineering, technical support, or account management title. Reject jobs that explicitly require **3+ years** of experience in those specific roles. **DO NOT reject based on "2 years experience required" or "1+ years" — that is within the acceptable range.** Many companies treat 1–2 year requirements as a soft filter and will interview strong candidates with adjacent experience.
+- **Domain-specific requirements are deal-breakers for Tier 3.** If a Tier 3 (adjacent) job requires industry/domain experience outside of software/technology (e.g., "10+ years in manufacturing," "fluent in Spanish," "2+ years MedTech experience," "CPA/CFA required"), reject it. This rule does NOT apply to Tier 1 or Tier 2 jobs — evaluate those normally based on game design and Unity/C# fit. General tech skills (SQL, APIs, SaaS, cloud) are NOT disqualifying for any tier — Kyle can learn those.
+- NOT a fit for backend-primary, full-stack-primary, or React-heavy roles.
+- NOT a fit for C# backend (ASP.NET Core, Entity Framework, Web API) even if titled "C# Developer."
 
-### Unity is a general-purpose framework
+Unity is not just for games — it's used in EdTech, architecture, healthcare, automotive, film, manufacturing, and retail.
 
-**Unity is not just for games.** Unity is used across many industries including:
-- **EdTech** (interactive simulations, virtual labs, training platforms)
-- **Architecture / real estate** (3D visualization, virtual walkthroughs)
-- **Healthcare** (medical simulation, surgical training)
-- **Automotive** (HMI design, digital twins, configurators)
-- **Film / animation** (real-time rendering, virtual production)
-- **Manufacturing / industrial** (digital twins, training simulations)
-- **Retail** (AR product visualization, interactive kiosks)
+## Role tiers
 
-When a job posting mentions Unity, do NOT assume it is a game development role. Evaluate the actual job responsibilities.
+**Tier 1 — Game Designer** (best possible fit, score 95–100):
+Game Designer, Level Designer, Systems Designer, Combat Designer, Economy Designer, Technical Game Designer. These are rare and highly competitive — always accept them.
 
-### Tiered role categories
+**Tier 2 — Programmer** (strongest technical fit, score 85–95):
+Unity Developer, C# client-side (WPF/MAUI/Avalonia), Gameplay Engineer, UI Programmer, Tools Engineer, Technical Designer with scripting.
 
-**Tier 1 — Programmer roles** (strongest fit, highest scores):
-- Unity Developer / Engineer (any industry — games, EdTech, simulation, visualization, etc.)
-- C# client-side developer (WPF, MAUI, Avalonia, desktop apps — NOT ASP.NET backend)
-- Gameplay Engineer / Programmer
-- UI Programmer (game/interactive media)
-- Tools Engineer (game/tools side)
-- Technical Designer (with significant scripting/programming)
-- Sales Engineer or Solutions Engineer at a game engine, game tools, or interactive media company
+**Tier 3 — Adjacent** (score 70–80, BUT only at technology/software companies):
+- Sales Engineer, Solutions Engineer/Consultant — pre-sales technical roles with demos/POCs
+- Implementation Specialist/Consultant — onboarding and configuring software
+- Application Support — configuring/troubleshooting software products (NOT phone help desk)
+- Technical Support Engineer — deep technical troubleshooting (NOT Tier 1 phone queue)
+- EdTech roles where game dev experience adds value
 
-**Tier 2 — Adjacent roles** (good fit, slightly lower scores):
-- **EdTech roles**: roles at educational technology companies where Unity/C#/game development experience is a meaningful advantage, even if not strictly required. Includes: curriculum developer, learning experience designer, educational content developer, or similar roles at companies building interactive/simulation-based learning products.
-- **Application Support Analyst / Application Specialist**: roles focused on supporting, configuring, or troubleshooting a software product for customers — especially at SaaS or EdTech companies. These are deeply technical support roles, NOT general phone/email help desk support.
-- **Customer Success / Implementation / Onboarding**: Customer Success Manager, Technical Account Manager, Implementation Specialist, Implementation Consultant, Implementation Manager, Onboarding Specialist, Client Success Manager — especially at SaaS or EdTech companies.
-- **Solutions Engineer / Sales Engineer**: pre-sales technical roles at software companies, especially where technical demos, POCs, or integrations are core responsibilities.
-- **Technical Support Engineer**: deeply technical support roles where the candidate would troubleshoot, debug, or configure complex software products. NOT general help-desk, phone-queue, or Tier 1 support roles.
+**CRITICAL — "tech company" test for Tier 3:** Kyle wants to work for companies whose core business IS software/technology. A software company that serves dentists or farmers = GOOD (it's a tech company). A tractor manufacturer, hospital chain, bank, or retailer with an IT department = BAD (NOT a tech company). **If the employer is not a technology/software company, score 40–60 max regardless of title.**
 
-## Location constraints
+Tier 3 at a real tech company with acceptable salary → score 70–80. Do not penalize these for lacking Unity/C# — Kyle's customer-facing skills make them strong fits.
 
-- Candidate is near **Lexington, MA**.
-- If job is **Remote** (or explicitly "Remote OK"): location_ok = "yes".
-- If job is **Hybrid/On-site**, use the exhaustive list below.
+## Compensation
 
-### Commutable towns (within ~45-minute drive of Lexington, MA)
-
-The following towns/cities are commutable. If the job's office location is in one of these, set location_ok = "yes":
-
-Acton, Andover, Arlington, Ashland, Ayer, Bedford, Belmont, Beverly, Billerica, Bolton, Boston, Boxborough, Braintree, Brookline, Burlington, Cambridge, Canton, Carlisle, Chelmsford, Chelsea, Concord, Danvers, Dedham, Dover, Dracut, Dunstable, Everett, Foxborough, Framingham, Grafton, Groton, Harvard, Holliston, Hopkinton, Hudson, Lawrence, Lexington, Lincoln, Littleton, Lowell, Lynn, Lynnfield, Malden, Marlborough, Maynard, Medfield, Medford, Medway, Melrose, Methuen, Milford, Millis, Milton, Natick, Needham, Newton, North Andover, North Reading, Northborough, Norwood, Peabody, Pepperell, Quincy, Reading, Revere, Salem, Saugus, Sherborn, Shirley, Shrewsbury, Somerville, Southborough, Stoneham, Stow, Sudbury, Tewksbury, Townsend, Tyngsborough, Wakefield, Walpole, Waltham, Watertown, Wayland, Wellesley, Westborough, Westford, Weston, Wilmington, Winchester, Woburn, Worcester
-
-If the office is in a Massachusetts town NOT on this list, set location_ok = "no".
-If the office is in another US state (and not remote), set location_ok = "no".
-
-**Location is a binary pass/fail.** A commutable job (10 minutes away) and a further-but-still-commutable job (40 minutes away) should receive **the same score** for location. Do NOT penalize score for commute distance within the commutable zone.
-
-If the location text is ambiguous (e.g. "Lexington" without a state, "Hybrid preferred but Remote OK", or a state abbreviation without a city):
-- location_ok = "unknown" (do NOT auto-disqualify; note ambiguity in reasons).
-
-## Compensation rule
-
-- Prefer cash comp **>= $90,000/year**.
-- If the posting explicitly shows max < $90k **AND** has no explicit equity/rev-share/commission upside, treat as a strong negative and usually `accept=false`.
-- **If salary is missing or unclear, do NOT penalize the score at all.** Most job postings omit salary. Simply note "Salary not listed" in reasons and move on. Do not lower the score for missing salary information.
+- Prefer >= $60K/year. If max < $60K with no equity/commission upside → strong negative.
+- **Missing salary = no penalty.** Most postings omit it.
 
 ## Work-life balance
 
-- Prefer **standard business hours** (roughly 8-to-5, Monday–Friday).
-- **Frequent weekend travel** or extended on-call rotations are a strong negative.
-- **Occasional travel** (e.g. quarterly onsite, annual conference, occasional customer visit) is fine.
-- **Occasional Zoom/video calls** are fine and expected.
-- If the posting mentions "crunch culture," mandatory overtime, or frequent weekend work, note in reasons and score lower.
+- Prefer standard 8-to-5. Frequent weekend travel or mandatory crunch → strong negative.
+- Occasional travel (quarterly onsite, conferences) is fine.
 
-## Deal-breakers / automatic disqualifiers
+## Deal-breakers (accept=false)
 
-If any of these are clearly true, set `accept=false` and include the reason in `red_flags`:
+- Backend-heavy / full-stack-primary / C# backend (ASP.NET/EF/Web API)
+- React-heavy front-end
+- VR/XR/AR required (optional mention OK)
+- Android SDK / native Android game dev required
+- Military / defense / weapons (general simulation OK)
+- Art/artist/visual-design roles (Technical Artist, 3D Artist, etc.) — but NOT Game Designer (that's Tier 1)
+- Non-software roles (pure sales, marketing, HR) or scams
+- General help-desk / Tier 1 phone support
+- Visa-targeting (OPT/CPT/H1B-only)
+- Travel > 30% of time
+- Requires 3+ years of experience in customer success, sales engineering, technical support, or account management
+- Requires a graduate degree (Master's, PhD, MBA) — Kyle has a bachelor's in game design
 
-- **Backend-heavy or full-stack-primary** (most responsibilities are server/backend/web app).
-- **C# backend roles**: ASP.NET Core, Entity Framework, Web API, microservices, or server-side .NET as the primary focus. Even if the title says "C# Developer," if the job is primarily backend, it is NOT a fit.
-- **React-heavy front-end** (React is a primary requirement and central to the role).
-- **VR/XR/AR focus REQUIRED** (optional/minor mention is OK).
-- **Android SDK / native Android game development REQUIRED.**
-- **location_ok = "no"** (on-site/hybrid required outside commutable zone). This is always a deal-breaker.
-- **Explicit visa-targeting** that excludes the candidate or is "OPT/CPT/H1B-only / non-immigrant visa people only."
-- **Art/artist/visual-design roles** (e.g. "Technical Artist," "3D Artist," "Character Artist," "VFX Artist"). The candidate is a programmer, not an artist. Even if the title mentions Unity, artist roles are not a fit.
-- **Military / defense / weapons** roles. Any job whose primary purpose is developing weapons systems, military combat simulations, or defense applications is a deal-breaker — even if it uses Unity. (General-purpose simulation or training that is not specifically weapons/combat-focused is OK.)
-- **Non-software roles** (sales/recruiting-only, marketing, HR, etc.) or obvious scams.
-- **General help-desk or Tier 1 phone support** roles. If the posting describes answering phones, handling ticket queues, or basic troubleshooting with no deep technical component, it is not a fit.
+## Scoring
 
-## Scoring guidance
-
-- 85–100: extremely strong Tier 1 match (Unity/C# gameplay/UI/tools; clear responsibilities; remote or MA; credible)
-- 75–84: strong match — either a great Tier 1 role with minor caveats, or an excellent Tier 2 match
-- 70–74: good match, worth applying — solid Tier 2 roles, or Tier 1 roles with some uncertainty
-- 50–69: borderline; only accept if the role is close to Unity/C# client-side and constraints are not bad
+- 95–100: Game Designer (Tier 1)
+- 85–95: strong Tier 2 (Unity/C# client-side, credible tech company)
+- 70–84: solid Tier 2 with caveats, OR Tier 3 at a real tech company
+- 50–69: borderline — Tier 3 at a non-tech company, or weak fit
 - 0–49: not a fit
 
-**Tier 2 roles should generally score 70–80**, not higher, unless they are an exceptionally strong match (e.g. EdTech company building Unity-based simulations, seeking someone with exactly Kyle's background).
+**Repeat: The employer must be a technology/software company for Tier 3 to score 70+.** Implementation Specialist at HubSpot → 75. Implementation Specialist at John Deere → 50. The company's core business matters.
 
-## Acceptance guidance
-
-Set `accept=true` when:
-- score >= 70
-- AND no deal-breakers apply
-- AND location_ok is not "no"
-- AND compensation rule is not clearly violated
-
-## Output rules
-
-- Output **valid JSON only** (no markdown).
-- Be concise.
+Output valid JSON only, no markdown. Be concise.

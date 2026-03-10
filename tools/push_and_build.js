@@ -6,6 +6,7 @@ if (!token) { console.error('Usage: node push_and_build.js <APIFY_TOKEN>'); proc
 
 // Actor IDs can be passed as additional args, or defaults to all actors
 const actors = [
+  { id: 'geG3B8lxaePXguzP5', dir: 'actors/00_run_pipeline', name: '00_run_pipeline' },
   { id: 'SGTmGMEk3jQYL1gyt', dir: 'actors/01_collect_jobs', name: '01_collect_jobs' },
   { id: '9NCG9BRS1FK8wHXyv', dir: 'actors/02_merge_dedup',  name: '02_merge_dedup' },
   { id: 'CCrFLcQe6Gg25Ye8p', dir: 'actors/03_score_jobs',   name: '03_score_jobs' },
