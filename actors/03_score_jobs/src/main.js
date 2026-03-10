@@ -1185,47 +1185,75 @@ Actor.main(async () => {
 
   // 2) Check LinkedIn URLs for "No longer accepting applications"
   //    Only check accepted jobs with LinkedIn job URLs — small number of fetches.
+  //    "Closed" results are cached across runs to avoid re-pinging LinkedIn for dead jobs.
+  //    "Open" results are NOT cached — we re-check each run since jobs can close any time.
+  const linkedinClosedCache = new Set(scoreCache?.linkedinClosedUrls || []);
   const linkedinAccepted = results.filter(
     (r) => r?.evaluation?.accepted && /linkedin\.com\/jobs/i.test(r.applyUrl || r.url || '')
   );
   let linkedinClosedCount = 0;
+  let linkedinClosedCacheHits = 0;
 
   if (linkedinAccepted.length > 0) {
-    log.info(`Checking ${linkedinAccepted.length} accepted LinkedIn jobs for closed listings...`);
-
-    async function isLinkedInJobClosed(jobUrl) {
-      try {
-        const res = await fetch(jobUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; job-pipeline/1.0)' },
-          signal: AbortSignal.timeout(10000),
-        });
-        const html = await res.text();
-        return html.includes('No longer accepting applications');
-      } catch {
-        return false; // on error, assume still open (don't penalize)
+    // Mark jobs known-closed from cache (no HTTP fetch needed)
+    const toCheck = [];
+    for (const r of linkedinAccepted) {
+      const jobUrl = r.applyUrl || r.url || '';
+      if (linkedinClosedCache.has(jobUrl)) {
+        linkedinClosedCacheHits++;
+        linkedinClosedCount++;
+        r.evaluation.accepted = false;
+        r.evaluation.accept = false;
+        r.evaluation.red_flags = [...(r.evaluation.red_flags || []), 'LinkedIn: No longer accepting applications'];
+        r.evaluation.reason_short = `${r.evaluation.reason_short || ''} [CLOSED]`.trim();
+      } else {
+        toCheck.push(r);
       }
     }
 
-    // Check in batches of 10 to avoid overwhelming LinkedIn
-    const LI_BATCH = 10;
-    for (let i = 0; i < linkedinAccepted.length; i += LI_BATCH) {
-      const batch = linkedinAccepted.slice(i, i + LI_BATCH);
-      const checks = await Promise.all(
-        batch.map((r) => isLinkedInJobClosed(r.applyUrl || r.url || ''))
-      );
-      for (let k = 0; k < batch.length; k++) {
-        if (checks[k]) {
-          linkedinClosedCount++;
-          batch[k].evaluation.accepted = false;
-          batch[k].evaluation.accept = false;
-          batch[k].evaluation.red_flags = [...(batch[k].evaluation.red_flags || []), 'LinkedIn: No longer accepting applications'];
-          batch[k].evaluation.reason_short = `${batch[k].evaluation.reason_short || ''} [CLOSED]`.trim();
+    if (linkedinClosedCacheHits > 0) {
+      log.info(`LinkedIn closed cache: ${linkedinClosedCacheHits} known-closed jobs skipped.`);
+    }
+
+    if (toCheck.length > 0) {
+      log.info(`Checking ${toCheck.length} accepted LinkedIn jobs for closed listings...`);
+
+      async function isLinkedInJobClosed(jobUrl) {
+        try {
+          const res = await fetch(jobUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; job-pipeline/1.0)' },
+            signal: AbortSignal.timeout(10000),
+          });
+          const html = await res.text();
+          return html.includes('No longer accepting applications');
+        } catch {
+          return false; // on error, assume still open (don't penalize)
         }
       }
-      // Small delay between batches to be polite
-      if (i + LI_BATCH < linkedinAccepted.length) await new Promise((r) => setTimeout(r, 1000));
+
+      // Check in batches of 10 to avoid overwhelming LinkedIn
+      const LI_BATCH = 10;
+      for (let i = 0; i < toCheck.length; i += LI_BATCH) {
+        const batch = toCheck.slice(i, i + LI_BATCH);
+        const checks = await Promise.all(
+          batch.map((r) => isLinkedInJobClosed(r.applyUrl || r.url || ''))
+        );
+        for (let k = 0; k < batch.length; k++) {
+          if (checks[k]) {
+            linkedinClosedCount++;
+            const jobUrl = batch[k].applyUrl || batch[k].url || '';
+            linkedinClosedCache.add(jobUrl); // cache for future runs
+            batch[k].evaluation.accepted = false;
+            batch[k].evaluation.accept = false;
+            batch[k].evaluation.red_flags = [...(batch[k].evaluation.red_flags || []), 'LinkedIn: No longer accepting applications'];
+            batch[k].evaluation.reason_short = `${batch[k].evaluation.reason_short || ''} [CLOSED]`.trim();
+          }
+        }
+        // Small delay between batches to be polite
+        if (i + LI_BATCH < toCheck.length) await new Promise((r) => setTimeout(r, 1000));
+      }
     }
-    log.info(`LinkedIn check: ${linkedinClosedCount} of ${linkedinAccepted.length} are closed.`);
+    log.info(`LinkedIn check: ${linkedinClosedCount} closed (${linkedinClosedCacheHits} cached, ${linkedinClosedCount - linkedinClosedCacheHits} new). ${linkedinAccepted.length - linkedinClosedCount} open.`);
   }
 
   // Push scored + accepted datasets
@@ -1309,6 +1337,7 @@ Actor.main(async () => {
     accepted: acceptedJobs.length,
     seniorTier3Filtered,
     linkedinClosed: linkedinClosedCount,
+    linkedinClosedCacheHits,
     linkedinEnriched: linkedinEnrichCount,
     threshold,
     gateOnLocation,
@@ -1364,6 +1393,7 @@ Actor.main(async () => {
     scoredDatasetName,
     mantikIds,
     linkedinUrlCache: linkedinUrlCache || {},
+    linkedinClosedUrls: [...linkedinClosedCache],
     cachedAt: nowIso(),
   });
 
