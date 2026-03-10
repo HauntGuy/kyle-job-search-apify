@@ -423,6 +423,9 @@ function computeLocationOk(locationStr) {
     if (partLower.includes('massachusetts')) {
       // Extract city name: "Boston, Massachusetts, United States" → "boston"
       const city = partLower.split(',')[0].trim();
+      // State-level entry like "Massachusetts, United States" (no specific city) →
+      // job is available somewhere in MA, give benefit of the doubt
+      if (city === 'massachusetts') return 'yes';
       if (COMMUTABLE_TOWNS.has(city)) return 'yes';
       // Massachusetts but not in commutable list → keep checking other locations
     }

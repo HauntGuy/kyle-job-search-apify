@@ -490,7 +490,7 @@ async function runRapidApiMantiks(source, knownMantikIds) {
     const id = String(hit.id || '').trim();
     if (!id) continue;
 
-    if (knownIds.has(id)) {
+    if (knownIds.has(id) || detailMap.has(id)) {
       detailsSkipped++;
       continue;
     }
