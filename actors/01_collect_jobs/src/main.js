@@ -479,7 +479,7 @@ async function runRapidApiMantiks(source, knownMantikIds) {
   }
 
   const detailMap = new Map();
-  const { results: detailResults, failures } = await processWithRetries(
+  const { results: detailResults, failures, stats: detailStats } = await processWithRetries(
     uniqueNewHits,
     async (hit) => {
       const id = String(hit.id || '').trim();
@@ -515,6 +515,8 @@ async function runRapidApiMantiks(source, knownMantikIds) {
       itemCount: jobs.length,
       detailsFetched,
       detailsSkipped,
+      detailFailures: failures.length,
+      detailRetries: detailStats.retries,
     },
   };
 }
