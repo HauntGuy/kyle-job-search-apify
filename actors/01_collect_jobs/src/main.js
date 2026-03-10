@@ -413,10 +413,17 @@ function normalizeMantiks(sourceId, hit, detail) {
   const title = firstString(d.title, hit.title);
   const company = firstString(d.company_name, hit.company_name, d.company, hit.company);
   const location = firstString(d.location, hit.location);
-  const url = firstString(d.url, hit.url, d.link, hit.link);
+  let url = firstString(d.url, hit.url, d.link, hit.link);
   const salary = firstString(d.salary_text, hit.salary_text, d.salary, hit.salary);
   const postedAt = firstString(d.date_posted, hit.date_posted, d.posted_at, hit.posted_at);
   const companyUrl = firstString(d.company_url, hit.company_url);
+
+  // Mantiks API often returns relative paths like "/job/{id}?locality=us" with no domain.
+  // Construct a proper Indeed URL since Mantiks scrapes Indeed.
+  const jobId = String(hit.id || '').trim();
+  if (jobId && (!url || !url.startsWith('http'))) {
+    url = `https://www.indeed.com/viewjob?jk=${encodeURIComponent(jobId)}`;
+  }
 
   // Strip HTML tags from description
   let description = firstString(d.description, hit.description);

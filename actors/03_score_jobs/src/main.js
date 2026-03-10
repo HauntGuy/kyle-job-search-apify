@@ -570,6 +570,97 @@ function setCellHyperlink(cell, url, text) {
   }
 }
 
+/**
+ * For accepted jobs without LinkedIn URLs, search LinkedIn's public guest page
+ * and swap in the LinkedIn URL if the same job is found.
+ * Fallback: keep existing URL (Indeed, Greenhouse, etc.).
+ * Returns the number of jobs enriched with LinkedIn URLs.
+ */
+async function enrichLinkedInUrls(acceptedJobs) {
+  const isLiUrl = (u) => /linkedin\.com\/jobs/i.test(String(u || ''));
+
+  const nonLinkedin = acceptedJobs.filter(
+    (j) => j?.evaluation?.accepted && !isLiUrl(j.applyUrl) && !isLiUrl(j.url)
+  );
+  if (nonLinkedin.length === 0) return 0;
+
+  log.info(`LinkedIn enrichment: searching LinkedIn for ${nonLinkedin.length} non-LinkedIn accepted jobs…`);
+
+  // Normalize company name to a slug fragment for matching LinkedIn URL patterns
+  // LinkedIn URLs use: /jobs/view/{title-slug}-at-{company-slug}-{id}
+  function companySlug(name) {
+    return String(name || '')
+      .toLowerCase()
+      .replace(/[,.'"""'']/g, '')
+      .replace(/\b(inc|llc|ltd|corp|co|pte|gmbh|sarl|sa|ag|plc|lp|l\.?p\.?)\b/gi, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  async function searchLinkedIn(title, company) {
+    const q = `${title} ${company}`.trim();
+    const searchUrl = `https://www.linkedin.com/jobs/search/?keywords=${encodeURIComponent(q)}&location=United%20States`;
+    try {
+      const res = await fetch(searchUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; job-pipeline/1.0)' },
+        signal: AbortSignal.timeout(10000),
+      });
+      const html = await res.text();
+
+      // Extract all /jobs/view/ URLs from the HTML
+      const urlMatches = html.match(/https?:\/\/[a-z.]*linkedin\.com\/jobs\/view\/[^"'?\s]+/gi) || [];
+      // Deduplicate
+      return [...new Set(urlMatches)];
+    } catch (err) {
+      log.warning(`LinkedIn search failed for "${q}": ${err?.message || err}`);
+      return [];
+    }
+  }
+
+  let enrichedCount = 0;
+
+  // Process in batches of 5 to be polite to LinkedIn
+  const BATCH_SIZE = 5;
+  for (let i = 0; i < nonLinkedin.length; i += BATCH_SIZE) {
+    const batch = nonLinkedin.slice(i, i + BATCH_SIZE);
+    const searches = await Promise.all(
+      batch.map((j) => searchLinkedIn(j.title || '', j.company || ''))
+    );
+
+    for (let k = 0; k < batch.length; k++) {
+      const job = batch[k];
+      const urls = searches[k];
+      if (urls.length === 0) continue;
+
+      const slug = companySlug(job.company);
+      if (!slug) continue;
+
+      // Find a URL whose slug contains the company name after "-at-"
+      const match = urls.find((u) => {
+        const lower = u.toLowerCase();
+        // Match "-at-{company}-" or "-at-{company}" at end
+        return lower.includes(`-at-${slug}-`) || lower.endsWith(`-at-${slug}`);
+      });
+
+      if (match) {
+        // Clean off any trailing URL fragments that were part of the HTML attribute
+        const cleanUrl = match.split(/['">\s]/)[0];
+        log.info(`LinkedIn enriched: "${job.title}" at ${job.company} → ${cleanUrl}`);
+        job.applyUrl = cleanUrl;
+        enrichedCount++;
+      }
+    }
+
+    // Delay between batches
+    if (i + BATCH_SIZE < nonLinkedin.length) {
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+
+  log.info(`LinkedIn enrichment: ${enrichedCount} of ${nonLinkedin.length} jobs matched on LinkedIn.`);
+  return enrichedCount;
+}
+
 // Build an XLSX workbook buffer from an array of scored jobs
 async function buildScoredXlsx(jobs, {
   includeSearchTerms = false,
@@ -1110,6 +1201,10 @@ Actor.main(async () => {
     }
   }
 
+  // 3) LinkedIn URL enrichment — for accepted jobs without LinkedIn URLs,
+  //    search LinkedIn's public guest page to find the same job and swap in the LinkedIn URL.
+  const linkedinEnrichCount = await enrichLinkedInUrls(acceptedJobs);
+
   // Build accepted.xlsx + scored.xlsx (Excel format with hyperlinks, frozen panes, bold headers)
   const xlsxContentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
@@ -1168,6 +1263,7 @@ Actor.main(async () => {
     accepted: acceptedJobs.length,
     seniorTier3Filtered,
     linkedinClosed: linkedinClosedCount,
+    linkedinEnriched: linkedinEnrichCount,
     threshold,
     gateOnLocation,
     model,
