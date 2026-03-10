@@ -150,6 +150,7 @@ Actor.main(async () => {
 
   const limitHitWarnings = [];
   const sourceSummaryLines = [];
+  const collectionWarnings = [];
 
   if (Array.isArray(collectReport.sources)) {
     for (const s of collectReport.sources) {
@@ -168,6 +169,28 @@ Actor.main(async () => {
       if (meta.hitLimitLikely === true && requestedLimit != null && returnedCount != null) {
         limitHitWarnings.push(
           `${id}: returned ${returnedCount}, which exactly matched its limit of ${requestedLimit} (there may be more matching jobs).`
+        );
+      }
+
+      // Source-level errors (entire source failed — 0 jobs collected from it)
+      if (s.status === 'error') {
+        collectionWarnings.push(
+          `${id}: source failed entirely — ${s.error || 'unknown error'}. No jobs were collected from this source.`
+        );
+      }
+
+      // Mantiks partial search (some pages succeeded, then a page failed after retries)
+      if (meta.searchError) {
+        collectionWarnings.push(
+          `${id}: ${meta.searchError}. Results are partial (${meta.searchPagesFetched || '?'} pages succeeded).`
+        );
+      }
+
+      // Mantiks detail failures (search succeeded but some detail calls failed after retries)
+      const detailFails = Number(meta.detailFailures || 0);
+      if (detailFails > 0) {
+        collectionWarnings.push(
+          `${id}: ${detailFails} job detail call${detailFails === 1 ? '' : 's'} failed after retries. Those jobs have no description (search-level data only).`
         );
       }
     }
@@ -204,11 +227,22 @@ Actor.main(async () => {
   }
 
   const unscoredCount = Number(scoringReport?.unscoredCount || 0);
-  const unscoredBanner = unscoredCount > 0
-    ? `<div style="background:#fff3cd;border:2px solid #ffc107;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:16px;"><b>⚠️ ${unscoredCount} job${unscoredCount === 1 ? '' : 's'} remain${unscoredCount === 1 ? 's' : ''} unscored, due to rate limits</b></div>`
-    : '';
 
-  const summarySection = `${unscoredBanner}<h2>Summary</h2><ul>${summaryItems.join('')}</ul>`;
+  // Build warning banners for issues that need attention (shown at very top of gist)
+  const warningBanners = [];
+  if (unscoredCount > 0) {
+    warningBanners.push(
+      `⚠️ ${unscoredCount} job${unscoredCount === 1 ? '' : 's'} remain${unscoredCount === 1 ? 's' : ''} unscored, due to rate limits`
+    );
+  }
+  for (const w of collectionWarnings) {
+    warningBanners.push(`⚠️ ${w}`);
+  }
+  const bannersHtml = warningBanners.map(
+    (msg) => `<div style="background:#fff3cd;border:2px solid #ffc107;border-radius:8px;padding:12px 16px;margin-bottom:8px;font-size:16px;"><b>${escHtml(msg)}</b></div>`
+  ).join('\n');
+
+  const summarySection = `${bannersHtml}<h2>Summary</h2><ul>${summaryItems.join('')}</ul>`;
 
   const envCheck = {
     GIST_ID: gistId ? 'set' : 'missing',

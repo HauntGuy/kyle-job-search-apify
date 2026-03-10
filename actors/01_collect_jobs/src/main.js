@@ -446,7 +446,10 @@ async function runRapidApiMantiks(source, knownMantikIds) {
   };
 
   // --- Search phase: discover jobs (sequential, stop on empty page) ---
+  // A failed page stops pagination but keeps already-fetched pages (partial results).
   const allHits = [];
+  let searchPagesFetched = 0;
+  let searchError = null;
   for (let page = 1; page <= maxPages; page++) {
     const params = new URLSearchParams({ query, page: String(page), locality });
     if (location) params.set('location', location);
@@ -454,17 +457,24 @@ async function runRapidApiMantiks(source, knownMantikIds) {
     const url = `https://indeed12.p.rapidapi.com/jobs/search?${params.toString()}`;
     log.info(`[${source.id}] GET ${url} (page ${page}/${maxPages})`);
 
-    const json = await withRetries(
-      () => fetchJsonRetryable(url, headers),
-      { retries: 3, baseMs: 6000, maxMs: 60000, label: `${source.id} search` },
-    );
+    try {
+      const json = await withRetries(
+        () => fetchJsonRetryable(url, headers),
+        { retries: 3, baseMs: 6000, maxMs: 60000, label: `${source.id} search` },
+      );
 
-    const hits = Array.isArray(json) ? json : (json?.hits || json?.results || json?.data || []);
-    if (hits.length === 0) break;
-    allHits.push(...hits);
+      const hits = Array.isArray(json) ? json : (json?.hits || json?.results || json?.data || []);
+      if (hits.length === 0) break;
+      allHits.push(...hits);
+      searchPagesFetched++;
+    } catch (err) {
+      searchError = `Search failed on page ${page}/${maxPages} after retries: ${err?.message || err}`;
+      log.warning(`[${source.id}] ${searchError}. Keeping ${allHits.length} results from pages 1-${page - 1}.`);
+      break;
+    }
   }
 
-  log.info(`[${source.id}] Search returned ${allHits.length} results. Fetching details for new jobs…`);
+  log.info(`[${source.id}] Search returned ${allHits.length} results (${searchPagesFetched} pages). Fetching details for new jobs…`);
 
   // --- Detail phase: fetch full descriptions for NEW jobs only ---
   const uniqueNewHits = [];
@@ -513,6 +523,8 @@ async function runRapidApiMantiks(source, knownMantikIds) {
     jobs,
     meta: {
       itemCount: jobs.length,
+      searchPagesFetched,
+      searchError: searchError || undefined,
       detailsFetched,
       detailsSkipped,
       detailFailures: failures.length,
