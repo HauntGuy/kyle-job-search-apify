@@ -3,6 +3,7 @@
 
 import { Actor, log } from 'apify';
 import ExcelJS from 'exceljs';
+import { withRetries, processWithRetries, fetchJsonRetryable } from './resilient-fetch.js';
 
 function nowIso() { return new Date().toISOString(); }
 function safeRunId(runId) { if (!runId) return null; return String(runId).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80); }
@@ -38,29 +39,6 @@ function getEnvOrNull(name) {
   const v = process.env[name];
   if (!v) return null;
   return String(v);
-}
-
-// --------------- RapidAPI rate-limit throttle ---------------
-// The free RapidAPI plan has per-minute rate limits.  When two RapidAPI-backed
-// sources fire back-to-back (e.g. indeed_unity then indeed_game_designer),
-// the second source's first request can 429.  This module-level throttle
-// enforces a minimum gap between RapidAPI HTTP calls.
-let _lastRapidApiCallMs = 0;
-const RAPIDAPI_GAP_MS = 6000; // 6 seconds between RapidAPI fetches (Mantiks Ultra: 10 req/min)
-
-async function rapidApiThrottle(sourceId) {
-  if (_lastRapidApiCallMs > 0) {
-    const elapsed = Date.now() - _lastRapidApiCallMs;
-    if (elapsed < RAPIDAPI_GAP_MS) {
-      const wait = RAPIDAPI_GAP_MS - elapsed;
-      log.info(`[${sourceId}] RapidAPI throttle: waiting ${wait}ms before next call…`);
-      await new Promise((r) => setTimeout(r, wait));
-    }
-  }
-}
-
-function rapidApiTick() {
-  _lastRapidApiCallMs = Date.now();
 }
 
 function requireEnvs(required = []) {
@@ -366,12 +344,14 @@ async function runRapidApiJSearch(source) {
   const url = `https://jsearch.p.rapidapi.com/search?${params.toString()}`;
   log.info(`[${source.id}] GET ${url}`);
 
-  await rapidApiThrottle(source.id);
-  const json = await fetchJson(url, {
+  const headers = {
     'X-RapidAPI-Key': apiKey,
     'X-RapidAPI-Host': 'jsearch.p.rapidapi.com',
-  });
-  rapidApiTick();
+  };
+  const json = await withRetries(
+    () => fetchJsonRetryable(url, headers),
+    { retries: 3, baseMs: 2000, maxMs: 15000, label: source.id },
+  );
 
   const items = Array.isArray(json?.data) ? json.data : [];
   const jobs = items.map((it) => normalizeJSearch(source.id, it));
@@ -460,27 +440,25 @@ async function runRapidApiMantiks(source, knownMantikIds) {
   const maxPages = Number(source.pages || 1) || 1;
   const knownIds = knownMantikIds || new Set();
 
-  // --- Search phase: discover jobs ---
+  const headers = {
+    'X-RapidAPI-Key': apiKey,
+    'X-RapidAPI-Host': 'indeed12.p.rapidapi.com',
+  };
+
+  // --- Search phase: discover jobs (sequential, stop on empty page) ---
   const allHits = [];
   for (let page = 1; page <= maxPages; page++) {
-    const params = new URLSearchParams({
-      query,
-      page: String(page),
-      locality,
-    });
+    const params = new URLSearchParams({ query, page: String(page), locality });
     if (location) params.set('location', location);
 
     const url = `https://indeed12.p.rapidapi.com/jobs/search?${params.toString()}`;
     log.info(`[${source.id}] GET ${url} (page ${page}/${maxPages})`);
 
-    await rapidApiThrottle(source.id);
-    const json = await fetchJson(url, {
-      'X-RapidAPI-Key': apiKey,
-      'X-RapidAPI-Host': 'indeed12.p.rapidapi.com',
-    });
-    rapidApiTick();
+    const json = await withRetries(
+      () => fetchJsonRetryable(url, headers),
+      { retries: 3, baseMs: 6000, maxMs: 60000, label: `${source.id} search` },
+    );
 
-    // Handle both array and wrapped response formats
     const hits = Array.isArray(json) ? json : (json?.hits || json?.results || json?.data || []);
     if (hits.length === 0) break;
     allHits.push(...hits);
@@ -489,36 +467,41 @@ async function runRapidApiMantiks(source, knownMantikIds) {
   log.info(`[${source.id}] Search returned ${allHits.length} results. Fetching details for new jobs…`);
 
   // --- Detail phase: fetch full descriptions for NEW jobs only ---
-  let detailsFetched = 0;
+  const uniqueNewHits = [];
+  const seenIds = new Set();
   let detailsSkipped = 0;
-  const detailMap = new Map(); // id → detail object
-
   for (const hit of allHits) {
     const id = String(hit.id || '').trim();
     if (!id) continue;
-
-    if (knownIds.has(id) || detailMap.has(id)) {
-      detailsSkipped++;
-      continue;
-    }
-
-    try {
-      await rapidApiThrottle(source.id);
-      const detailUrl = `https://indeed12.p.rapidapi.com/job/${encodeURIComponent(id)}?locality=${locality}`;
-      log.info(`[${source.id}] Detail: ${detailUrl}`);
-      const detail = await fetchJson(detailUrl, {
-        'X-RapidAPI-Key': apiKey,
-        'X-RapidAPI-Host': 'indeed12.p.rapidapi.com',
-      });
-      rapidApiTick();
-      detailMap.set(id, detail);
-      detailsFetched++;
-    } catch (err) {
-      rapidApiTick();
-      log.warning(`[${source.id}] Detail fetch failed for id=${id}: ${err?.message || err}`);
-    }
+    if (knownIds.has(id) || seenIds.has(id)) { detailsSkipped++; continue; }
+    seenIds.add(id);
+    uniqueNewHits.push(hit);
   }
 
+  const detailMap = new Map();
+  const { results: detailResults, failures } = await processWithRetries(
+    uniqueNewHits,
+    async (hit) => {
+      const id = String(hit.id || '').trim();
+      const detailUrl = `https://indeed12.p.rapidapi.com/job/${encodeURIComponent(id)}?locality=${locality}`;
+      log.info(`[${source.id}] Detail: ${detailUrl}`);
+      return await fetchJsonRetryable(detailUrl, headers);
+    },
+    { concurrency: 3, retries: 3, baseMs: 6000, maxMs: 60000,
+      retryPasses: 1, retryCooldownMs: 10000, label: `${source.id} detail` },
+  );
+
+  // Collect successful details
+  const detailsFetched = uniqueNewHits.length - failures.length;
+  for (let i = 0; i < uniqueNewHits.length; i++) {
+    const id = String(uniqueNewHits[i].id || '').trim();
+    if (detailResults[i] && typeof detailResults[i] === 'object') {
+      detailMap.set(id, detailResults[i]);
+    }
+  }
+  if (failures.length > 0) {
+    log.warning(`[${source.id}] ${failures.length} detail calls failed after retries.`);
+  }
   log.info(`[${source.id}] Details: ${detailsFetched} fetched, ${detailsSkipped} skipped (cached).`);
 
   const jobs = allHits.map((hit) => {

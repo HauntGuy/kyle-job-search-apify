@@ -6,6 +6,7 @@ import { Actor, log } from 'apify';
 import ExcelJS from 'exceljs';
 import http from 'node:http';
 import https from 'node:https';
+import { processWithRetries } from './resilient-fetch.js';
 
 // Disable HTTP keep-alive for the legacy HTTP module.  When scoring with
 // reasoning models (GPT-5), requests take 10-30s each.  During that time
@@ -254,68 +255,22 @@ async function callOpenAIJson({ apiKey, model, messages, maxOutputTokens = 700, 
 
   const text = extractResponseText(json);
   if (!text) {
-    throw new Error(`OpenAI response missing output text: ${JSON.stringify(json).slice(0, 700)}`);
+    const err = new Error(`OpenAI response missing output text: ${JSON.stringify(json).slice(0, 700)}`);
+    err.status = 200; // Non-retryable (API succeeded but response was empty)
+    throw err;
   }
 
   const cleaned = stripCodeFences(text);
   try {
     return JSON.parse(cleaned);
   } catch (e) {
-    throw new Error(`Model did not return valid JSON: ${e?.message || e}\n${cleaned.slice(0, 700)}`);
+    const err = new Error(`Model did not return valid JSON: ${e?.message || e}\n${cleaned.slice(0, 700)}`);
+    err.status = 200; // Non-retryable (API succeeded but returned invalid JSON)
+    throw err;
   }
 }
 
-async function withRetries(fn, { retries = 5, baseMs = 800, maxMs = 12000, stats } = {}) {
-  let attempt = 0;
-  while (true) {
-    try {
-      return await fn();
-    } catch (e) {
-      attempt += 1;
-
-      const status = e?.status || 0;
-      const retryable = status === 0 || status === 429 || status >= 500;
-
-      if (attempt > retries || !retryable) throw e;
-
-      if (stats) stats.retries += 1;
-
-      // Exponential backoff with jitter
-      let wait = Math.min(maxMs, baseMs * Math.pow(2, attempt - 1));
-      const jitterFactor = 0.7 + Math.random() * 0.6; // 0.7–1.3
-      wait = Math.floor(wait * jitterFactor);
-
-      // Respect Retry-After if present
-      const ra = e?.retryAfterMs;
-      if (Number.isFinite(ra) && ra > 0) {
-        wait = Math.max(wait, Math.floor(ra));
-        if (stats) stats.maxRetryAfterMs = Math.max(stats.maxRetryAfterMs || 0, Math.floor(ra));
-      }
-
-      log.warning(`Retryable OpenAI error (status=${status}). Waiting ${wait}ms then retrying... (attempt ${attempt}/${retries})`);
-      await sleep(wait);
-    }
-  }
-}
-
-async function mapWithConcurrency(items, concurrency, mapper) {
-  const results = new Array(items.length);
-  let idx = 0;
-
-  async function worker() {
-    while (true) {
-      const myIdx = idx;
-      idx += 1;
-      if (myIdx >= items.length) return;
-      results[myIdx] = await mapper(items[myIdx], myIdx);
-    }
-  }
-
-  const workers = [];
-  for (let i = 0; i < Math.max(1, concurrency); i++) workers.push(worker());
-  await Promise.all(workers);
-  return results;
-}
+// withRetries and mapWithConcurrency removed — now using processWithRetries from resilient-fetch.js
 
 function truncate(s, maxChars) {
   const t = String(s || '');
@@ -1078,90 +1033,76 @@ Actor.main(async () => {
       },
     ];
 
-    try {
-      const evaluation = await withRetries(
-        () => callOpenAIJson({ apiKey, model, messages, stats: openAiStats }),
-        { retries: 8, baseMs: 800, maxMs: 30000, stats: openAiStats }
-      );
+    // LLM call — errors propagate to processWithRetries for retry handling
+    const evaluation = await callOpenAIJson({ apiKey, model, messages, stats: openAiStats });
 
-      const score = toInt(evaluation.score ?? evaluation.Score ?? 0, 0);
-      const accept = !!(evaluation.accept ?? evaluation.Accept);
+    const score = toInt(evaluation.score ?? evaluation.Score ?? 0, 0);
+    const accept = !!(evaluation.accept ?? evaluation.Accept);
 
-      const accepted =
-        accept &&
-        score >= threshold &&
-        (!gateOnLocation || locationOk === 'yes');
+    const accepted =
+      accept &&
+      score >= threshold &&
+      (!gateOnLocation || locationOk === 'yes');
 
-      return {
-        ...job,
-        evaluation: {
-          ...evaluation,
-          score,
-          accept,
-          accepted,
-          location_ok: locationOk,
-        },
-        scoredAt: nowIso(),
-      };
-    } catch (err) {
-      if (err?.status || String(err?.message || '').includes('OpenAI')) openAiStats.hardFailures += 1;
-      log.error(`Scoring failed for idx=${idx} title="${job.title}": ${err?.message || err}`);
-
-      return {
-        ...job,
-        evaluation: {
-          accept: false,
-          accepted: false,
-          score: 0,
-          confidence: 0,
-          location_ok: locationOk,
-          reason_short: 'Scoring error',
-          reasons: [],
-          red_flags: [String(err?.message || err)],
-          tags: [],
-        },
-        scoredAt: nowIso(),
-        scoringError: String(err?.stack || err),
-      };
-    }
+    return {
+      ...job,
+      evaluation: {
+        ...evaluation,
+        score,
+        accept,
+        accepted,
+        location_ok: locationOk,
+      },
+      scoredAt: nowIso(),
+    };
   }
 
-  // --- Initial scoring pass ---
-  const results = await mapWithConcurrency(mergedJobs, concurrency, scoreOneJob);
+  // --- Scoring with automatic retries and retry passes ---
+  // scoreOneJob returns results for deterministic filters (cache, location, title, expired)
+  // and throws for LLM errors — processWithRetries handles per-call retries and retry passes.
+  const { results: rawResults, failures: scoringFailures, stats: retryStats } = await processWithRetries(
+    mergedJobs,
+    scoreOneJob,
+    {
+      concurrency,
+      retries: 8,
+      baseMs: 800,
+      maxMs: 30000,
+      retryPasses: 3,
+      retryCooldownMs: 15000,
+      retryConcurrency: Math.min(concurrency, 4),
+      label: 'LLM scoring',
+    },
+  );
+  openAiStats.retries = retryStats.retries;
+
+  // Convert remaining failures to error-marker results
+  const results = [...rawResults];
+  for (const { index, error } of scoringFailures) {
+    const job = mergedJobs[index];
+    const locationOk = preLocationMap.get(index) || computeLocationOk(job.location);
+    openAiStats.hardFailures += 1;
+    log.error(`Scoring failed for idx=${index} title="${job.title}": ${error?.message || error}`);
+    results[index] = {
+      ...job,
+      evaluation: {
+        accept: false,
+        accepted: false,
+        score: 0,
+        confidence: 0,
+        location_ok: locationOk,
+        reason_short: 'Scoring error',
+        reasons: [],
+        red_flags: [String(error?.message || error)],
+        tags: [],
+      },
+      scoredAt: nowIso(),
+      scoringError: String(error?.stack || error),
+    };
+  }
+
   const totalSkipped = locationSkipped + titleSkipped + expiredSkipped;
-  log.info(`Initial pass done. ${cacheHits} cache hits, ${locationSkipped} skipped (bad location), ${titleSkipped} skipped (bad title), ${expiredSkipped} skipped (expired), ${mergedJobs.length - totalSkipped - cacheHits} sent to LLM.`);
-
-  // --- Re-score passes for failed jobs (up to 3 additional attempts) ---
-  const maxRescoringPasses = 3;
-  for (let pass = 1; pass <= maxRescoringPasses; pass++) {
-    const failedIndices = [];
-    for (let i = 0; i < results.length; i++) {
-      if (results[i].scoringError) failedIndices.push(i);
-    }
-
-    if (failedIndices.length === 0) {
-      log.info(`All jobs scored successfully (no failures to re-score).`);
-      break;
-    }
-
-    log.info(`Re-scoring pass ${pass}/${maxRescoringPasses}: ${failedIndices.length} failed jobs. Waiting 15s for rate limits to cool...`);
-    await sleep(15000);
-
-    const failedJobs = failedIndices.map((i) => ({ job: mergedJobs[i], origIdx: i }));
-    const rescored = await mapWithConcurrency(
-      failedJobs,
-      Math.min(concurrency, 4),
-      async (item, _batchIdx) => scoreOneJob(item.job, item.origIdx)
-    );
-
-    let fixed = 0;
-    for (let k = 0; k < failedIndices.length; k++) {
-      if (!rescored[k].scoringError) fixed += 1;
-      results[failedIndices[k]] = rescored[k];
-    }
-
-    log.info(`Re-scoring pass ${pass}: fixed ${fixed}/${failedIndices.length} jobs.`);
-  }
+  log.info(`Scoring done. ${cacheHits} cache hits, ${locationSkipped} skipped (bad location), ${titleSkipped} skipped (bad title), ${expiredSkipped} skipped (expired), ${mergedJobs.length - totalSkipped - cacheHits} sent to LLM. ${scoringFailures.length} hard failures.`);
 
   // --- Post-scoring filters ---
 
@@ -1367,7 +1308,7 @@ Actor.main(async () => {
     report.warnings.unshift(
       `${unscoredJobs.length} jobs remain unscored, due to rate limits`
     );
-    log.warning(`${unscoredJobs.length} jobs remain unscored after ${maxRescoringPasses} re-score passes.`);
+    log.warning(`${unscoredJobs.length} jobs remain unscored after all retry passes.`);
   }
 
   if (openAiStats.rateLimit429 > 0) {
