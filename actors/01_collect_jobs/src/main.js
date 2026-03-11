@@ -431,13 +431,29 @@ function normalizeGrackleHQ(sourceId, item) {
     }
   }
 
+  // GrackleHQ often embeds city in the company field: "Roblox - San Mateo, CA, USA"
+  // Split on " - " to separate company name from location when present.
+  let company = item.company || '';
+  let location = item.location || '';
+  const dashIdx = company.indexOf(' - ');
+  if (dashIdx > 0) {
+    const afterDash = company.slice(dashIdx + 3).trim();
+    // Looks like a location if it contains a comma (City, ST) or country name
+    if (/,/.test(afterDash) || /\b(USA|United States|Canada|UK|Remote)\b/i.test(afterDash)) {
+      const extractedLocation = afterDash;
+      company = company.slice(0, dashIdx).trim();
+      // Prefer the parsed location from the card text; use company-embedded location as fallback
+      location = location || extractedLocation;
+    }
+  }
+
   return {
     source: sourceId,
     fetchedAt: nowIso(),
     title: item.title || '',
-    company: item.company || '',
+    company,
     companyUrl: '',
-    location: item.location || '',
+    location,
     url: canonicalizeUrl(item.url || ''),
     applyUrl: canonicalizeUrl(item.url || ''),
     postedAt,
@@ -617,22 +633,66 @@ async function runBuiltIn(source) {
       const companyUrl = companyLink.startsWith('http') ? companyLink
         : (companyLink ? `https://builtin.com${companyLink}` : '');
 
-      // Extract location and salary from card text using heuristics
+      // Extract location, work mode, and salary using Font Awesome icon markers.
+      // Built In uses fa-house-building (work mode), fa-location-dot (city),
+      // fa-sack-dollar (salary) as semantic anchors for each data field.
       let location = '';
+      let workMode = '';
       let salary = '';
 
-      $card.find('span').each((_, span) => {
-        const text = $(span).text().trim();
-        if (!text) return;
-        // Location: contains "Remote", "Hybrid", "On-site", or city/state patterns
-        if (!location && (/\b(Remote|Hybrid|On-?site)\b/i.test(text) || /,\s*[A-Z]{2}\b/.test(text))) {
-          location = text;
+      // Work mode (Remote / Hybrid / In-Office)
+      const houseIcon = $card.find('i.fa-house-building').first();
+      if (houseIcon.length) {
+        const container = houseIcon.closest('.d-flex.align-items-start');
+        if (container.length) workMode = container.find('span').first().text().trim();
+      }
+
+      // City / geographic location
+      const locIcon = $card.find('i.fa-location-dot').first();
+      if (locIcon.length) {
+        const container = locIcon.closest('.d-flex.align-items-start');
+        if (container.length) {
+          const locSpan = container.find('span').first();
+          let locText = locSpan.text().trim();
+          // Multi-location cards show "N Locations" with a tooltip listing individual cities
+          if (/\d+\s+locations/i.test(locText)) {
+            const tooltip = locSpan.attr('data-bs-title') || '';
+            if (tooltip) {
+              // Parse tooltip HTML: "<div class='...'>Austin, TX</div><div>NYC, NY</div>"
+              const cities = tooltip.match(/>([^<]+)</g);
+              if (cities) locText = cities.map(c => c.slice(1).trim()).filter(Boolean).join('; ');
+            }
+          }
+          location = locText;
         }
-        // Salary: contains $ amounts or K ranges
-        if (!salary && /\$[\d,]+|\d+K\s*[-–]\s*\d+K/i.test(text)) {
-          salary = text;
-        }
-      });
+      }
+
+      // Salary
+      const salaryIcon = $card.find('i.fa-sack-dollar').first();
+      if (salaryIcon.length) {
+        const container = salaryIcon.closest('.d-flex.align-items-start');
+        if (container.length) salary = container.find('span').first().text().trim();
+      }
+
+      // Combine work mode + location: "Remote | Boston, MA, USA" or just "In-Office | NYC"
+      if (workMode && location) {
+        location = `${workMode} | ${location}`;
+      } else if (workMode && !location) {
+        location = workMode; // Only work mode, no city
+      }
+      // If no icons found, fall back to span heuristics
+      if (!location && !workMode) {
+        $card.find('span').each((_, span) => {
+          const text = $(span).text().trim();
+          if (!text) return;
+          if (!location && (/\b(Remote|Hybrid|On-?site)\b/i.test(text) || /,\s*[A-Z]{2}\b/.test(text))) {
+            location = text;
+          }
+          if (!salary && /\$[\d,]+|\d+K\s*[-–]\s*\d+K/i.test(text)) {
+            salary = text;
+          }
+        });
+      }
 
       if (title) {
         allItems.push({ id: jobId, title, company, companyUrl, location, salary, url: jobUrl });
@@ -793,6 +853,7 @@ async function runRapidApiMantiks(source, knownMantikIds) {
 
   const location = String(source.location || '').trim();
   const locality = String(source.locality || 'us').trim();
+  const radius = source.radius != null ? String(source.radius).trim() : '';
   const maxPages = Number(source.pages || 1) || 1;
   const knownIds = knownMantikIds || new Set();
 
@@ -812,6 +873,7 @@ async function runRapidApiMantiks(source, knownMantikIds) {
   for (let page = 1; page <= maxPages; page++) {
     const params = new URLSearchParams({ query, page: String(page), locality, sort: 'date' });
     if (location) params.set('location', location);
+    if (radius) params.set('radius', radius);
 
     const url = `https://indeed12.p.rapidapi.com/jobs/search?${params.toString()}`;
     log.info(`[${source.id}] GET ${url} (page ${page}/${maxPages})`);
