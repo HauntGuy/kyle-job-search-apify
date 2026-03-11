@@ -148,7 +148,6 @@ Actor.main(async () => {
   const scored = Number(scoringReport?.totalScored ?? 0);
   const accepted = Number(scoringReport?.accepted ?? 0);
 
-  const limitHitWarnings = [];
   const sourceSummaryLines = [];
   const collectionWarnings = [];
 
@@ -164,12 +163,6 @@ Actor.main(async () => {
         sourceSummaryLines.push(`${id}: returned ${returnedCount} / limit ${requestedLimit}`);
       } else if (s.itemCount != null) {
         sourceSummaryLines.push(`${id}: returned ${s.itemCount}`);
-      }
-
-      if (meta.hitLimitLikely === true && requestedLimit != null && returnedCount != null) {
-        limitHitWarnings.push(
-          `${id}: returned ${returnedCount}, which exactly matched its limit of ${requestedLimit} (there may be more matching jobs).`
-        );
       }
 
       // Source-level errors (entire source failed — 0 jobs collected from it)
@@ -212,12 +205,6 @@ Actor.main(async () => {
     );
   }
 
-  if (limitHitWarnings.length) {
-    summaryItems.push(
-      `<li><b>Possible source limits reached:</b><br/>${limitHitWarnings.map(escHtml).join('<br/>')}</li>`
-    );
-  }
-
   if (rateLimit429 > 0) {
     summaryItems.push(
       `<li><b>OpenAI rate limiting occurred:</b> ${rateLimit429} time(s). ` +
@@ -237,6 +224,12 @@ Actor.main(async () => {
   }
   for (const w of collectionWarnings) {
     warningBanners.push(`⚠️ ${w}`);
+  }
+
+  // Cap warnings — sources that may have more results than we retrieved
+  const capWarnings = Array.isArray(collectReport.capWarnings) ? collectReport.capWarnings : [];
+  for (const cw of capWarnings) {
+    warningBanners.push(`⚠️ ${cw.sourceId}: ${cw.detail}`);
   }
   const bannersHtml = warningBanners.map(
     (msg) => `<div style="background:#fff3cd;border:2px solid #ffc107;border-radius:8px;padding:12px 16px;margin-bottom:8px;font-size:16px;"><b>${escHtml(msg)}</b></div>`

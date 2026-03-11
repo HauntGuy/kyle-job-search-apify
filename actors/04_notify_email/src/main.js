@@ -83,9 +83,21 @@ Actor.main(async () => {
     ? `<div style="background:#fff3cd;border:2px solid #ffc107;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:16px;"><b>⚠️ ${unscoredCount} job${unscoredCount === 1 ? '' : 's'} remain${unscoredCount === 1 ? 's' : ''} unscored, due to rate limits</b></div>`
     : '';
 
+  // Cap warnings from collector — sources that may have more results
+  let capWarningsHtml = '';
+  try {
+    const collectReport = await kv.getValue('collect_report.json');
+    const capWarnings = Array.isArray(collectReport?.capWarnings) ? collectReport.capWarnings : [];
+    if (capWarnings.length > 0) {
+      const lines = capWarnings.map(w => `• ${w.sourceId}: ${w.detail}`).join('<br/>');
+      capWarningsHtml = `<div style="background:#fff3cd;border:2px solid #ffc107;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:14px;"><b>⚠️ Some sources may have more results than we retrieved:</b><br/>${lines}</div>`;
+    }
+  } catch { /* collect_report may not exist */ }
+
   const html = `
     <div style="font-family: Arial, sans-serif;">
       ${unscoredWarning}
+      ${capWarningsHtml}
       <h2>Job Search Results</h2>
       <p><b>Accepted:</b> ${acceptedCount}<br/>
          <b>Scored:</b> ${totalScored}</p>

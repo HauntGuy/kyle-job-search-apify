@@ -327,6 +327,7 @@ async function runApifyActorSource(source, globalMaxItemsPerSource, remaining) {
   });
 
   const hitLimitLikely = rawItems.length === requestedLimit;
+  const hitCap = hitLimitLikely;
 
   return {
     jobs,
@@ -337,6 +338,7 @@ async function runApifyActorSource(source, globalMaxItemsPerSource, remaining) {
       requestedLimit,
       returnedCount: rawItems.length,
       hitLimitLikely,
+      hitCap,
       itemCount: jobs.length
     }
   };
@@ -373,8 +375,10 @@ async function runRapidApiJSearch(source) {
   );
 
   const items = Array.isArray(json?.data) ? json.data : [];
+  const totalAvailable = json?.parameters?.total || null;
   const jobs = items.map((it) => normalizeJSearch(source.id, it));
-  return { jobs, meta: { itemCount: jobs.length } };
+  const hitCap = totalAvailable != null && items.length < totalAvailable;
+  return { jobs, meta: { itemCount: jobs.length, totalAvailable, numPages: numPages, hitCap } };
 }
 
 async function runRemotive(source) {
@@ -391,7 +395,8 @@ async function runRemotive(source) {
   const json = await fetchJson(url);
   const items = Array.isArray(json?.jobs) ? json.jobs : [];
   const jobs = items.slice(0, limit).map((it) => normalizeGeneric(source.id, it));
-  return { jobs, meta: { itemCount: jobs.length } };
+  const hitCap = items.length >= limit;
+  return { jobs, meta: { itemCount: jobs.length, limit, returnedCount: items.length, hitCap } };
 }
 
 async function runRemoteOk(source) {
@@ -449,8 +454,10 @@ async function runGrackleHQ(source) {
   const maxPages = source.maxPages || 25;
 
   const allItems = [];
+  const deptsCapped = [];
 
   for (const dept of departments) {
+    let deptPagesFetched = 0;
     for (let page = 0; page < maxPages; page++) {
       const params = new URLSearchParams({ country, department: dept, pageidx: String(page) });
       const url = `https://gracklehq.com/jobs?${params.toString()}`;
@@ -506,6 +513,7 @@ async function runGrackleHQ(source) {
         }
       });
 
+      deptPagesFetched++;
       log.info(`[${source.id}] ${dept} p${page}: ${listings.length} listings (total ${allItems.length})`);
 
       // Small delay between pages
@@ -513,6 +521,7 @@ async function runGrackleHQ(source) {
         await new Promise(r => setTimeout(r, 1000));
       }
     }
+    if (deptPagesFetched >= maxPages) deptsCapped.push(dept);
   }
 
   // Deduplicate by ID (a job can appear in multiple departments)
@@ -523,8 +532,9 @@ async function runGrackleHQ(source) {
   }
 
   const jobs = unique.map(item => normalizeGrackleHQ(source.id, item));
+  const hitCap = deptsCapped.length > 0;
   log.info(`[${source.id}] GrackleHQ: ${allItems.length} raw → ${unique.length} unique → ${jobs.length} normalized`);
-  return { jobs, meta: { itemCount: jobs.length, rawCount: allItems.length, departments } };
+  return { jobs, meta: { itemCount: jobs.length, rawCount: allItems.length, departments, maxPages, deptsCapped: hitCap ? deptsCapped : undefined, hitCap } };
 }
 
 // --------------- Built In (builtin.com) ---------------
@@ -556,6 +566,8 @@ async function runBuiltIn(source) {
   const state = source.state || '';
 
   const allItems = [];
+  let pagesFetched = 0;
+  let lastPageHadCards = false;
 
   for (let page = 1; page <= maxPages; page++) {
     const params = new URLSearchParams({ search: query, page: String(page) });
@@ -627,6 +639,8 @@ async function runBuiltIn(source) {
       }
     });
 
+    pagesFetched++;
+    lastPageHadCards = cards.length > 0;
     log.info(`[${source.id}] Page ${page}: ${cards.length} cards (total ${allItems.length})`);
 
     // Conservative delay to respect anti-bot measures
@@ -635,8 +649,9 @@ async function runBuiltIn(source) {
     }
   }
 
+  const hitCap = pagesFetched >= maxPages && lastPageHadCards;
   const jobs = allItems.map(item => normalizeBuiltIn(source.id, item));
-  return { jobs, meta: { itemCount: jobs.length } };
+  return { jobs, meta: { itemCount: jobs.length, pagesFetched, maxPages, hitCap } };
 }
 
 // --------------- USAJobs API (data.usajobs.gov) ---------------
@@ -722,8 +737,9 @@ async function runUSAJobs(source) {
   const totalCount = json?.SearchResult?.SearchResultCount || 0;
   const jobs = items.map(item => normalizeUSAJobs(source.id, item));
 
+  const hitCap = totalCount > items.length;
   log.info(`[${source.id}] USAJobs: ${items.length} items returned (total available: ${totalCount})`);
-  return { jobs, meta: { itemCount: jobs.length, totalAvailable: totalCount } };
+  return { jobs, meta: { itemCount: jobs.length, totalAvailable: totalCount, hitCap } };
 }
 
 // --------------- Mantiks Indeed API (indeed12.p.rapidapi.com) ---------------
@@ -872,16 +888,20 @@ async function runRapidApiMantiks(source, knownMantikIds) {
     return normalizeMantiks(source.id, hit, detail);
   });
 
+  const hitCap = searchPagesFetched >= maxPages && !earlyStopPage;
   return {
     jobs,
     meta: {
       itemCount: jobs.length,
       searchPagesFetched,
+      maxPages,
+      earlyStopPage: earlyStopPage || undefined,
       searchError: searchError || undefined,
       detailsFetched,
       detailsSkipped,
       detailFailures: failures.length,
       detailRetries: detailStats.retries,
+      hitCap,
     },
   };
 }
@@ -1099,6 +1119,40 @@ Actor.main(async () => {
       log.error(`[${source.id}] Source failed: ${err?.stack || err}`);
       if (config?.run?.stopOnCollectorErrors) throw err;
     }
+  }
+
+  // Build cap warnings for sources that may have missed jobs
+  const capWarnings = [];
+  for (const s of report.sources) {
+    if (s.status !== 'ok') continue;
+    if (!s.meta?.hitCap) continue;
+    const type = s.type;
+    let detail = '';
+    if (type === 'mantiks') {
+      detail = `searched ${s.meta.searchPagesFetched}/${s.meta.maxPages} pages — likely more older results exist`;
+    } else if (type === 'jsearch') {
+      detail = `returned ${s.meta.itemCount} of ${s.meta.totalAvailable} available — API paging limited`;
+    } else if (type === 'remotive') {
+      detail = `returned ${s.meta.returnedCount} items (limit ${s.meta.limit}) — more may exist`;
+    } else if (type === 'gracklehq') {
+      detail = `departments hit page cap: ${(s.meta.deptsCapped || []).join(', ')}`;
+    } else if (type === 'builtin') {
+      detail = `fetched ${s.meta.pagesFetched}/${s.meta.maxPages} pages — last page still had results`;
+    } else if (type === 'usajobs') {
+      detail = `returned ${s.meta.itemCount} of ${s.meta.totalAvailable} available — ResultsPerPage cap`;
+    } else if (s.meta?.hitLimitLikely) {
+      detail = `returned exactly ${s.meta.returnedCount} items (limit ${s.meta.requestedLimit}) — may have more`;
+    } else {
+      detail = 'returned item count equals request cap';
+    }
+    capWarnings.push({ sourceId: s.id, type, detail });
+  }
+  if (allJobs.length >= maxTotal) {
+    capWarnings.push({ sourceId: '_global', type: 'global', detail: `maxTotalItems=${maxTotal} reached — some sources may not have been fully collected` });
+  }
+  report.capWarnings = capWarnings;
+  if (capWarnings.length > 0) {
+    log.warning(`⚠️  Cap warnings (${capWarnings.length}): ${capWarnings.map(w => `${w.sourceId}: ${w.detail}`).join(' | ')}`);
   }
 
   // Push normalized jobs to dataset in batches
