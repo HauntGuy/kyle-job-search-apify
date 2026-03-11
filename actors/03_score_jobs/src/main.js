@@ -1325,12 +1325,18 @@ Actor.main(async () => {
   await kv.setValue('scoring_report.json', report);
 
   // Write score_cache.json for next run's cache + Mantiks detail skip
-  const mantikIds = [];
+  // Merge new Mantiks IDs with previously cached ones (union, not replace).
+  // The collector may also save IDs incrementally — preserve those too.
+  const existingMantikIds = (scoreCache?.mantikIds && Array.isArray(scoreCache.mantikIds))
+    ? scoreCache.mantikIds : [];
+  const mantikIdSet = new Set(existingMantikIds);
   for (const r of results) {
     for (const sid of (r.sourceJobIds || [])) {
-      if (typeof sid === 'string' && sid.startsWith('M:')) mantikIds.push(sid.slice(2));
+      if (typeof sid === 'string' && sid.startsWith('M:')) mantikIdSet.add(sid.slice(2));
     }
   }
+  const mantikIds = [...mantikIdSet];
+  log.info(`Mantiks cache: ${existingMantikIds.length} existing + ${mantikIdSet.size - existingMantikIds.length} new = ${mantikIds.length} total IDs`);
   await kv.setValue('score_cache.json', {
     scoringFormatVersion: SCORING_FORMAT_VERSION,
     rubricVersion: currentRubricVersion,
