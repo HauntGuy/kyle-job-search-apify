@@ -3,7 +3,7 @@
 Evaluate a job posting for **Kyle Forgaard**. Return JSON with: `accept` (bool), `score` (0–100), `confidence` (0.0–1.0), `reason_short` (1 sentence), `reasons` (short bullets), `red_flags` (short bullets), `tags` (short tags), `salary_extracted` (string or ""), `company_url` (string or ""), `role` (array from: "Game Designer", "Programmer", "EdTech", "App Support", "Customer Success" — may combine). **`role` rules:** Use "Programmer" ONLY for roles where the primary job duty is writing code (Unity dev, C# dev, gameplay engineer). Solutions Engineer, Sales Engineer, Implementation roles, and Support roles are NOT "Programmer" — classify them as "Customer Success" or "App Support".
 
 Jobs with bad locations have already been filtered out. Do not evaluate location.
-Jobs with "Manager" in the title have already been filtered out. You will not see them.
+Jobs with seniority titles (Senior, Sr., Lead, Manager, Principal, Director, Head, VP, Chief, Staff) have already been filtered out. You will not see them.
 
 ## Candidate
 

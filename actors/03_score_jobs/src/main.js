@@ -891,17 +891,29 @@ Actor.main(async () => {
   log.info(`Location pre-filter: ${noLocationCount} jobs are location_ok=no and will be skipped (not sent to LLM).`);
 
   // --- Pre-compute title-based disqualifiers (skip LLM, save cost) ---
-  // "Manager" in title: Kyle has no management/CSM experience yet.
-  const TITLE_DQ_MANAGER = /\bManager\b/i;
+  // Kyle is entry-level; any title implying seniority or management is not a fit.
+  const TITLE_DQ_PATTERNS = [
+    { re: /\bManager\b/i,                    label: 'Manager' },
+    { re: /\b(Senior|Sr\.?)\b/i,             label: 'Senior/Sr.' },
+    { re: /\bLead\b/i,                       label: 'Lead' },
+    { re: /\bPrincipal\b/i,                  label: 'Principal' },
+    { re: /\bDirector\b/i,                   label: 'Director' },
+    { re: /\b(Head of|Head,)\b/i,            label: 'Head of' },
+    { re: /\b(VP|Vice President)\b/i,        label: 'VP' },
+    { re: /\bChief\b/i,                      label: 'Chief' },
+    { re: /\bStaff\b/i,                      label: 'Staff' },
+  ];
   let titleSkipped = 0;
 
   function titleDisqualifyReason(title) {
-    if (TITLE_DQ_MANAGER.test(title)) return 'Title contains "Manager" — requires management/CSM experience Kyle does not have yet.';
+    for (const { re, label } of TITLE_DQ_PATTERNS) {
+      if (re.test(title)) return `Title contains "${label}" — too senior for Kyle's current experience level.`;
+    }
     return null;
   }
 
   const preTitleDqCount = mergedJobs.filter(j => titleDisqualifyReason(j.title || '')).length;
-  log.info(`Title pre-filter: ${preTitleDqCount} jobs have disqualified titles (Manager) and will be skipped.`);
+  log.info(`Title pre-filter: ${preTitleDqCount} jobs have disqualifying seniority titles and will be skipped.`);
 
   // --- Pre-compute date_validthrough expiration (skip LLM for expired listings) ---
   const nowMs = Date.now();
@@ -1106,23 +1118,9 @@ Actor.main(async () => {
 
   // --- Post-scoring filters ---
 
-  // 1) "Senior/Sr." filter for Tier 3 roles only (score < 85).
-  //    Tier 1 (Game Designer) and Tier 2 (Programmer) Senior titles are kept.
-  const TITLE_SENIOR = /\b(Senior|Sr\.?)\b/i;
-  let seniorTier3Filtered = 0;
-  for (const r of results) {
-    if (!r?.evaluation?.accepted) continue;
-    const score = r.evaluation.score ?? 0;
-    const title = r.title || '';
-    if (TITLE_SENIOR.test(title) && score < 85) {
-      seniorTier3Filtered++;
-      r.evaluation.accepted = false;
-      r.evaluation.accept = false;
-      r.evaluation.red_flags = [...(r.evaluation.red_flags || []), 'Senior title on Tier 3 role — requires more experience.'];
-      r.evaluation.reason_short = `${r.evaluation.reason_short || ''} [SENIOR-FILTERED]`.trim();
-    }
-  }
-  if (seniorTier3Filtered > 0) log.info(`Filtered out ${seniorTier3Filtered} Senior-titled Tier 3 jobs.`);
+  // Note: Senior/Lead/Manager/etc. filtering now happens in the pre-LLM title filter.
+  // These jobs never reach the LLM, so there is no post-LLM senior filter needed.
+  const seniorTier3Filtered = 0;
 
   // 2) Check LinkedIn URLs for "No longer accepting applications"
   //    Only check accepted jobs with LinkedIn job URLs — small number of fetches.
