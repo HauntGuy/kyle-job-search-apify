@@ -1128,9 +1128,9 @@ Actor.main(async () => {
     if (!s.meta?.hitCap) continue;
     const type = s.type;
     let detail = '';
-    if (type === 'mantiks') {
+    if (type === 'rapidapi_mantiks') {
       detail = `searched ${s.meta.searchPagesFetched}/${s.meta.maxPages} pages — likely more older results exist`;
-    } else if (type === 'jsearch') {
+    } else if (type === 'rapidapi_jsearch') {
       detail = `returned ${s.meta.itemCount} of ${s.meta.totalAvailable} available — API paging limited`;
     } else if (type === 'remotive') {
       detail = `returned ${s.meta.returnedCount} items (limit ${s.meta.limit}) — more may exist`;
