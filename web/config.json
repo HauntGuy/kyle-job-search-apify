@@ -125,6 +125,74 @@
       "query": "game designer",
       "locality": "us",
       "pages": 50
+    },
+    {
+      "id": "mantiks_game_developer",
+      "type": "rapidapi_mantiks",
+      "enabled": true,
+      "requiredEnv": ["RAPIDAPI_KEY"],
+      "query": "game developer",
+      "locality": "us",
+      "pages": 50
+    },
+    {
+      "id": "mantiks_game_programmer",
+      "type": "rapidapi_mantiks",
+      "enabled": true,
+      "requiredEnv": ["RAPIDAPI_KEY"],
+      "query": "game programmer",
+      "locality": "us",
+      "pages": 50
+    },
+    {
+      "id": "mantiks_ma_implementation",
+      "type": "rapidapi_mantiks",
+      "enabled": true,
+      "requiredEnv": ["RAPIDAPI_KEY"],
+      "query": "implementation specialist",
+      "location": "Massachusetts",
+      "locality": "us",
+      "pages": 50
+    },
+    {
+      "id": "mantiks_ma_customer_success",
+      "type": "rapidapi_mantiks",
+      "enabled": true,
+      "requiredEnv": ["RAPIDAPI_KEY"],
+      "query": "customer success",
+      "location": "Massachusetts",
+      "locality": "us",
+      "pages": 50
+    },
+    {
+      "id": "mantiks_ma_solutions_engineer",
+      "type": "rapidapi_mantiks",
+      "enabled": true,
+      "requiredEnv": ["RAPIDAPI_KEY"],
+      "query": "solutions engineer",
+      "location": "Massachusetts",
+      "locality": "us",
+      "pages": 50
+    },
+    {
+      "id": "mantiks_ma_tech_support",
+      "type": "rapidapi_mantiks",
+      "enabled": true,
+      "requiredEnv": ["RAPIDAPI_KEY"],
+      "query": "technical support engineer",
+      "location": "Massachusetts",
+      "locality": "us",
+      "pages": 50
+    },
+    {
+      "id": "mantiks_ma_sales_engineer",
+      "type": "rapidapi_mantiks",
+      "enabled": true,
+      "requiredEnv": ["RAPIDAPI_KEY"],
+      "query": "sales engineer",
+      "location": "Massachusetts",
+      "locality": "us",
+      "pages": 50
     }
   ],
   "merge": {
