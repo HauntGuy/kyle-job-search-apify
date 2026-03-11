@@ -111,16 +111,20 @@ function resolveActorId({ config, actorUser, step }) {
 // (8+ minutes for the scorer), and that idle connection gets killed by the
 // server.  With start+poll, each status check is a fresh short-lived request.
 // If any individual poll fails, we retry just that poll — never restart the actor.
-async function safeCallActor(actorId, input, label) {
+async function safeCallActor(actorId, input, label, opts = {}) {
   const client = Actor.apifyClient;
   const started = Date.now();
+
+  // Build start options (e.g. timeout override for long-running actors)
+  const startOpts = {};
+  if (opts.timeoutSecs) startOpts.timeout = opts.timeoutSecs;
 
   // 1) Start the actor (returns immediately — no long-lived connection)
   let runId;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       log.info(`Starting ${label}: ${actorId}${attempt > 1 ? ` (start retry ${attempt}/3)` : ''}`);
-      const run = await client.actor(actorId).start(input);
+      const run = await client.actor(actorId).start(input, startOpts);
       runId = run.id;
       break;
     } catch (err) {
@@ -202,7 +206,7 @@ Actor.main(async () => {
   try {
     // 1) Collect
     const collectActor = resolveActorId({ config, actorUser, step: 'collect' });
-    stepRuns.collect = await safeCallActor(collectActor, { config, kvStoreName, datasetPrefix, runId }, 'collect');
+    stepRuns.collect = await safeCallActor(collectActor, { config, kvStoreName, datasetPrefix, runId }, 'collect', { timeoutSecs: 7200 });
 
     // Safety check: if any source hit its limit, abort before spending money
     // on scoring.  This means we may be missing results and should investigate
