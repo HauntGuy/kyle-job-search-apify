@@ -1032,13 +1032,15 @@ Actor.main(async () => {
 
   // Load score cache for Mantiks detail-call skip (reuse previous job details)
   let knownMantikIds = new Set();
+  let scoreCache = null;
   try {
-    const scoreCache = await kv.getValue('score_cache.json');
+    scoreCache = await kv.getValue('score_cache.json');
     if (scoreCache?.mantikIds && Array.isArray(scoreCache.mantikIds)) {
       knownMantikIds = new Set(scoreCache.mantikIds);
       log.info(`Loaded ${knownMantikIds.size} cached Mantiks IDs from score_cache.json`);
     }
   } catch { /* no cache yet — first run */ }
+  if (!scoreCache) scoreCache = {};
 
   const rawDatasetName = datasetName(datasetPrefix, 'raw', runId);
   const rawDataset = await Actor.openDataset(rawDatasetName);
@@ -1102,6 +1104,24 @@ Actor.main(async () => {
       });
 
       report.totals.collected += jobs.length;
+
+      // After each Mantiks source, save new IDs to score_cache.json incrementally.
+      // This ensures IDs survive even if the run crashes or is aborted later.
+      // Bonus: later Mantiks queries benefit from earlier queries' IDs for
+      // both early termination AND detail-call skipping within the same run.
+      if (source.type === 'rapidapi_mantiks') {
+        const prevSize = knownMantikIds.size;
+        for (const job of jobs) {
+          for (const sid of (job.sourceJobIds || [])) {
+            if (typeof sid === 'string' && sid.startsWith('M:')) knownMantikIds.add(sid.slice(2));
+          }
+        }
+        if (knownMantikIds.size > prevSize) {
+          scoreCache.mantikIds = [...knownMantikIds];
+          await kv.setValue('score_cache.json', scoreCache);
+          log.info(`[${source.id}] Saved ${knownMantikIds.size} Mantiks IDs to score_cache.json (+${knownMantikIds.size - prevSize} new)`);
+        }
+      }
 
       if (allJobs.length >= maxTotal) {
         log.info(`Reached maxTotalItems=${maxTotal}; stopping further source collection.`);
