@@ -587,21 +587,21 @@ async function runBuiltIn(source) {
     cards.each((_, el) => {
       const $card = $(el);
 
-      // Title and URL
-      const titleEl = $card.find('[data-id="job-card-title"] a').first();
+      // Title and URL — data-id="job-card-title" is ON the <a> tag itself
+      const titleEl = $card.find('[data-id="job-card-title"]').first();
       if (!titleEl.length) return;
       const title = titleEl.text().trim();
       const href = titleEl.attr('href') || '';
       const jobUrl = href.startsWith('http') ? href : (href ? `https://builtin.com${href}` : '');
 
-      // Extract numeric ID from URL path like /job/something/12345 or /details/12345
+      // Extract numeric ID from URL path like /job/slug/12345
       const idMatch = href.match(/\/(\d+)(?:\?|$)/);
       const jobId = idMatch ? idMatch[1] : '';
 
-      // Company
+      // Company — data-id="company-title" is ON the <a> tag itself
       const companyEl = $card.find('[data-id="company-title"]').first();
       const company = companyEl.text().trim();
-      const companyLink = companyEl.find('a').attr('href') || companyEl.closest('a').attr('href') || '';
+      const companyLink = companyEl.attr('href') || '';
       const companyUrl = companyLink.startsWith('http') ? companyLink
         : (companyLink ? `https://builtin.com${companyLink}` : '');
 
