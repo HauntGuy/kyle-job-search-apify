@@ -4,7 +4,7 @@
   "datasetPrefix": "jobsearch-v3",
   "run": {
     "maxItemsPerSource": 1200,
-    "maxTotalItems": 5000,
+    "maxTotalItems": 10000,
     "stopOnCollectorErrors": false
   },
   "sources": [
