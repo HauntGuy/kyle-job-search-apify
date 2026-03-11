@@ -785,11 +785,14 @@ async function runRapidApiMantiks(source, knownMantikIds) {
     'X-RapidAPI-Host': 'indeed12.p.rapidapi.com',
   };
 
-  // --- Search phase: discover jobs (sequential, stop on empty page) ---
+  // --- Search phase: discover jobs (sorted by date, newest first) ---
+  // Stop early if 2 consecutive pages have ALL known job IDs (nothing new left).
   // A failed page stops pagination but keeps already-fetched pages (partial results).
   const allHits = [];
   let searchPagesFetched = 0;
   let searchError = null;
+  let consecutiveAllKnownPages = 0;
+  let earlyStopPage = 0;
   for (let page = 1; page <= maxPages; page++) {
     const params = new URLSearchParams({ query, page: String(page), locality, sort: 'date' });
     if (location) params.set('location', location);
@@ -807,6 +810,15 @@ async function runRapidApiMantiks(source, knownMantikIds) {
       if (hits.length === 0) break;
       allHits.push(...hits);
       searchPagesFetched++;
+
+      // Early termination: if every job on this page is already cached, increment counter.
+      const allKnown = hits.length > 0 && hits.every(h => knownIds.has(String(h.id || '').trim()));
+      consecutiveAllKnownPages = allKnown ? consecutiveAllKnownPages + 1 : 0;
+      if (consecutiveAllKnownPages >= 2) {
+        earlyStopPage = page;
+        log.info(`[${source.id}] Early stop: 2 consecutive all-cached pages (${page - 1} & ${page}). Skipping remaining pages.`);
+        break;
+      }
     } catch (err) {
       searchError = `Search failed on page ${page}/${maxPages} after retries: ${err?.message || err}`;
       log.warning(`[${source.id}] ${searchError}. Keeping ${allHits.length} results from pages 1-${page - 1}.`);
@@ -814,7 +826,8 @@ async function runRapidApiMantiks(source, knownMantikIds) {
     }
   }
 
-  log.info(`[${source.id}] Search returned ${allHits.length} results (${searchPagesFetched} pages). Fetching details for new jobs…`);
+  const stopReason = earlyStopPage ? `, early-stopped at page ${earlyStopPage}` : '';
+  log.info(`[${source.id}] Search returned ${allHits.length} results (${searchPagesFetched} pages${stopReason}). Fetching details for new jobs…`);
 
   // --- Detail phase: fetch full descriptions for NEW jobs only ---
   const uniqueNewHits = [];
