@@ -4,6 +4,9 @@
 import { Actor, log } from 'apify';
 import ExcelJS from 'exceljs';
 import { withRetries, processWithRetries, fetchJsonRetryable } from './resilient-fetch.js';
+import { load as cheerioLoad } from 'cheerio';
+
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 function nowIso() { return new Date().toISOString(); }
 function safeRunId(runId) { if (!runId) return null; return String(runId).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80); }
@@ -26,6 +29,22 @@ async function fetchJson(url, headers = {}) {
   const text = await fetchText(url, { ...headers, Accept: 'application/json' });
   try { return JSON.parse(text); }
   catch (e) { throw new Error(`Non-JSON response from ${url}: ${e?.message || e}\n${text.slice(0, 500)}`); }
+}
+
+async function fetchHtmlRetryable(url, headers = {}) {
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { 'User-Agent': BROWSER_UA, ...headers },
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    const err = new Error(`HTTP ${res.status} for ${url}: ${text.slice(0, 300)}`);
+    err.status = res.status;
+    const ra = res.headers.get('retry-after');
+    if (ra) err.retryAfterMs = (parseInt(ra, 10) || 10) * 1000;
+    throw err;
+  }
+  return text;
 }
 
 async function loadConfig(input) {
@@ -386,6 +405,327 @@ async function runRemoteOk(source) {
   return { jobs, meta: { itemCount: jobs.length } };
 }
 
+// --------------- GrackleHQ (gracklehq.com) ---------------
+
+function normalizeGrackleHQ(sourceId, item) {
+  // Parse age string ("3d", "1w", "2mo", "5h") into approximate postedAt
+  let postedAt = '';
+  if (item.age) {
+    const age = String(item.age).trim().toLowerCase();
+    let daysAgo = -1;
+    const mH = age.match(/(\d+)\s*h/);
+    const mD = age.match(/(\d+)\s*d/);
+    const mW = age.match(/(\d+)\s*w/);
+    const mM = age.match(/(\d+)\s*mo/);
+    if (mH) daysAgo = 0;
+    else if (mD) daysAgo = parseInt(mD[1], 10);
+    else if (mW) daysAgo = parseInt(mW[1], 10) * 7;
+    else if (mM) daysAgo = parseInt(mM[1], 10) * 30;
+    if (daysAgo >= 0) {
+      postedAt = new Date(Date.now() - daysAgo * 86400000).toISOString();
+    }
+  }
+
+  return {
+    source: sourceId,
+    fetchedAt: nowIso(),
+    title: item.title || '',
+    company: item.company || '',
+    companyUrl: '',
+    location: item.location || '',
+    url: canonicalizeUrl(item.url || ''),
+    applyUrl: canonicalizeUrl(item.url || ''),
+    postedAt,
+    description: '',
+    salary: '',
+    sourceJobId: String(item.id || ''),
+    raw: item,
+  };
+}
+
+async function runGrackleHQ(source) {
+  const country = source.country || 'USA';
+  const departments = source.departments || ['Engineering', 'Design'];
+  const maxPages = source.maxPages || 25;
+
+  const allItems = [];
+
+  for (const dept of departments) {
+    for (let page = 0; page < maxPages; page++) {
+      const params = new URLSearchParams({ country, department: dept, pageidx: String(page) });
+      const url = `https://gracklehq.com/jobs?${params.toString()}`;
+      log.info(`[${source.id}] GET ${url} (${dept} p${page})`);
+
+      let html;
+      try {
+        html = await withRetries(
+          () => fetchHtmlRetryable(url),
+          { retries: 2, baseMs: 2000, maxMs: 15000, label: `${source.id} ${dept}` },
+        );
+      } catch (err) {
+        log.warning(`[${source.id}] Failed to fetch ${dept} page ${page}: ${err.message}. Stopping department.`);
+        break;
+      }
+
+      const $ = cheerioLoad(html);
+      const listings = $('.joblisting');
+
+      if (listings.length === 0) {
+        log.info(`[${source.id}] ${dept} page ${page}: no listings, stopping.`);
+        break;
+      }
+
+      listings.each((_, el) => {
+        const $el = $(el);
+        const linkEl = $el.find('a[href*="/rd/"]').first();
+        const title = linkEl.text().trim();
+        const href = linkEl.attr('href') || '';
+
+        // Extract GrackleHQ ID from href like "/rd/373904"
+        const idMatch = href.match(/\/rd\/(\d+)/);
+        const grackleId = idMatch ? idMatch[1] : '';
+
+        const age = $el.find('.bottomright').text().trim();
+
+        // Remove title and age from full text to isolate company + location
+        const fullText = $el.text().trim();
+        const titleIdx = fullText.indexOf(title);
+        let afterTitle = titleIdx >= 0 ? fullText.slice(titleIdx + title.length) : fullText;
+        afterTitle = afterTitle.replace(age, '').trim();
+
+        // Split by newlines/tabs/multiple spaces to get company and location parts
+        const parts = afterTitle.split(/[\n\t]+|\s{2,}/).map(s => s.trim()).filter(Boolean);
+        const company = parts[0] || '';
+        const location = parts.slice(1).join(', ').trim();
+
+        if (title && grackleId) {
+          allItems.push({
+            id: grackleId, title, company, location, age,
+            url: `https://gracklehq.com${href}`,
+          });
+        }
+      });
+
+      log.info(`[${source.id}] ${dept} p${page}: ${listings.length} listings (total ${allItems.length})`);
+
+      // Small delay between pages
+      if (page < maxPages - 1 && listings.length > 0) {
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
+  }
+
+  // Deduplicate by ID (a job can appear in multiple departments)
+  const seen = new Set();
+  const unique = [];
+  for (const item of allItems) {
+    if (!seen.has(item.id)) { seen.add(item.id); unique.push(item); }
+  }
+
+  const jobs = unique.map(item => normalizeGrackleHQ(source.id, item));
+  log.info(`[${source.id}] GrackleHQ: ${allItems.length} raw → ${unique.length} unique → ${jobs.length} normalized`);
+  return { jobs, meta: { itemCount: jobs.length, rawCount: allItems.length, departments } };
+}
+
+// --------------- Built In (builtin.com) ---------------
+
+function normalizeBuiltIn(sourceId, item) {
+  return {
+    source: sourceId,
+    fetchedAt: nowIso(),
+    title: item.title || '',
+    company: item.company || '',
+    companyUrl: canonicalizeUrl(item.companyUrl || ''),
+    location: item.location || '',
+    url: canonicalizeUrl(item.url || ''),
+    applyUrl: canonicalizeUrl(item.url || ''),
+    postedAt: toIsoOrEmpty(item.postedAt || ''),
+    description: '',
+    salary: item.salary || '',
+    sourceJobId: String(item.id || ''),
+    raw: item,
+  };
+}
+
+async function runBuiltIn(source) {
+  const query = String(source.query || '').trim();
+  if (!query) throw new Error(`[${source.id}] Missing source.query`);
+
+  const maxPages = source.maxPages || 5;
+  const allLocations = source.allLocations !== false;
+  const state = source.state || '';
+
+  const allItems = [];
+
+  for (let page = 1; page <= maxPages; page++) {
+    const params = new URLSearchParams({ search: query, page: String(page) });
+    if (allLocations) params.set('allLocations', 'true');
+    if (state) params.set('state', state);
+
+    const url = `https://builtin.com/jobs?${params.toString()}`;
+    log.info(`[${source.id}] GET ${url} (page ${page}/${maxPages})`);
+
+    let html;
+    try {
+      html = await withRetries(
+        () => fetchHtmlRetryable(url),
+        { retries: 2, baseMs: 5000, maxMs: 30000, label: source.id },
+      );
+    } catch (err) {
+      log.warning(`[${source.id}] Failed to fetch page ${page}: ${err.message}. Stopping.`);
+      break;
+    }
+
+    const $ = cheerioLoad(html);
+    const cards = $('[data-id="job-card"]');
+
+    if (cards.length === 0) {
+      log.info(`[${source.id}] Page ${page}: no cards, stopping.`);
+      break;
+    }
+
+    cards.each((_, el) => {
+      const $card = $(el);
+
+      // Title and URL
+      const titleEl = $card.find('[data-id="job-card-title"] a').first();
+      if (!titleEl.length) return;
+      const title = titleEl.text().trim();
+      const href = titleEl.attr('href') || '';
+      const jobUrl = href.startsWith('http') ? href : (href ? `https://builtin.com${href}` : '');
+
+      // Extract numeric ID from URL path like /job/something/12345 or /details/12345
+      const idMatch = href.match(/\/(\d+)(?:\?|$)/);
+      const jobId = idMatch ? idMatch[1] : '';
+
+      // Company
+      const companyEl = $card.find('[data-id="company-title"]').first();
+      const company = companyEl.text().trim();
+      const companyLink = companyEl.find('a').attr('href') || companyEl.closest('a').attr('href') || '';
+      const companyUrl = companyLink.startsWith('http') ? companyLink
+        : (companyLink ? `https://builtin.com${companyLink}` : '');
+
+      // Extract location and salary from card text using heuristics
+      let location = '';
+      let salary = '';
+
+      $card.find('span').each((_, span) => {
+        const text = $(span).text().trim();
+        if (!text) return;
+        // Location: contains "Remote", "Hybrid", "On-site", or city/state patterns
+        if (!location && (/\b(Remote|Hybrid|On-?site)\b/i.test(text) || /,\s*[A-Z]{2}\b/.test(text))) {
+          location = text;
+        }
+        // Salary: contains $ amounts or K ranges
+        if (!salary && /\$[\d,]+|\d+K\s*[-–]\s*\d+K/i.test(text)) {
+          salary = text;
+        }
+      });
+
+      if (title) {
+        allItems.push({ id: jobId, title, company, companyUrl, location, salary, url: jobUrl });
+      }
+    });
+
+    log.info(`[${source.id}] Page ${page}: ${cards.length} cards (total ${allItems.length})`);
+
+    // Conservative delay to respect anti-bot measures
+    if (page < maxPages && cards.length > 0) {
+      await new Promise(r => setTimeout(r, 3000));
+    }
+  }
+
+  const jobs = allItems.map(item => normalizeBuiltIn(source.id, item));
+  return { jobs, meta: { itemCount: jobs.length } };
+}
+
+// --------------- USAJobs API (data.usajobs.gov) ---------------
+
+function normalizeUSAJobs(sourceId, item) {
+  const desc = item.MatchedObjectDescriptor || {};
+  const objectId = item.MatchedObjectId || '';
+  const pos = Array.isArray(desc.PositionLocation) ? desc.PositionLocation[0] : {};
+  const salary = Array.isArray(desc.PositionRemuneration) ? desc.PositionRemuneration[0] : {};
+  const salaryMin = salary.MinimumRange || '';
+  const salaryMax = salary.MaximumRange || '';
+  const salaryInterval = salary.Description || salary.RateIntervalCode || '';
+  const salaryStr = salaryMin && salaryMax
+    ? `$${Number(salaryMin).toLocaleString('en-US')} - $${Number(salaryMax).toLocaleString('en-US')} ${salaryInterval}`.trim()
+    : '';
+
+  const title = desc.PositionTitle || '';
+  const org = desc.OrganizationName || '';
+  const dept = desc.DepartmentName || '';
+  const company = org || dept;
+  const location = desc.PositionLocationDisplay || pos?.LocationName || '';
+  const url = desc.PositionURI || '';
+  const applyUri = Array.isArray(desc.ApplyURI) ? desc.ApplyURI[0] : (desc.ApplyURI || '');
+
+  // Build description from major duties + qualifications
+  const duties = desc.UserArea?.Details?.MajorDuties || [];
+  const qualSummary = desc.QualificationSummary || '';
+  let description = '';
+  if (duties.length > 0) {
+    description = duties.join('\n\n');
+    if (qualSummary) description += `\n\nQualifications: ${qualSummary}`;
+  } else {
+    description = qualSummary;
+  }
+
+  return {
+    source: sourceId,
+    fetchedAt: nowIso(),
+    title,
+    company,
+    companyUrl: '',
+    location,
+    url: canonicalizeUrl(url),
+    applyUrl: canonicalizeUrl(applyUri || url),
+    postedAt: toIsoOrEmpty(desc.PublicationStartDate || ''),
+    description: description.slice(0, 15000),
+    salary: salaryStr,
+    sourceJobId: String(objectId || desc.PositionID || ''),
+    raw: item,
+  };
+}
+
+async function runUSAJobs(source) {
+  const apiKey = getEnvOrNull('USAJOBS_API_KEY');
+  const email = getEnvOrNull('USAJOBS_EMAIL');
+  if (!apiKey) throw new Error(`[${source.id}] Missing USAJOBS_API_KEY env var`);
+  if (!email) throw new Error(`[${source.id}] Missing USAJOBS_EMAIL env var`);
+
+  const keyword = String(source.keyword || '').trim();
+  if (!keyword) throw new Error(`[${source.id}] Missing source.keyword`);
+
+  const params = new URLSearchParams({ Keyword: keyword, ResultsPerPage: '500' });
+  if (source.locationName) params.set('LocationName', source.locationName);
+  if (source.datePosted) params.set('DatePosted', String(source.datePosted));
+  if (source.jobCategoryCode) params.set('JobCategoryCode', source.jobCategoryCode);
+  if (source.whoMayApply) params.set('WhoMayApply', source.whoMayApply);
+  if (source.remoteIndicator) params.set('RemoteIndicator', source.remoteIndicator);
+
+  const url = `https://data.usajobs.gov/api/search?${params.toString()}`;
+  log.info(`[${source.id}] GET ${url}`);
+
+  const headers = {
+    'Authorization-Key': apiKey,
+    'User-Agent': email,
+  };
+
+  const json = await withRetries(
+    () => fetchJsonRetryable(url, headers),
+    { retries: 3, baseMs: 2000, maxMs: 15000, label: source.id },
+  );
+
+  const items = json?.SearchResult?.SearchResultItems || [];
+  const totalCount = json?.SearchResult?.SearchResultCount || 0;
+  const jobs = items.map(item => normalizeUSAJobs(source.id, item));
+
+  log.info(`[${source.id}] USAJobs: ${items.length} items returned (total available: ${totalCount})`);
+  return { jobs, meta: { itemCount: jobs.length, totalAvailable: totalCount } };
+}
+
 // --------------- Mantiks Indeed API (indeed12.p.rapidapi.com) ---------------
 
 function normalizeMantiks(sourceId, hit, detail) {
@@ -542,6 +882,9 @@ async function runSource(source, config, remaining, knownMantikIds) {
   if (type === 'rapidapi_mantiks') return await runRapidApiMantiks(source, knownMantikIds);
   if (type === 'remotive') return await runRemotive(source);
   if (type === 'remoteok') return await runRemoteOk(source);
+  if (type === 'gracklehq') return await runGrackleHQ(source);
+  if (type === 'builtin') return await runBuiltIn(source);
+  if (type === 'usajobs') return await runUSAJobs(source);
 
   throw new Error(`[${source.id}] Unknown source.type=${source.type}`);
 }
@@ -554,6 +897,8 @@ function collectedFriendlySource(sourceId) {
   if (s.startsWith('fantastic_')) return 'Fantastic';
   if (s.startsWith('linkedin_')) return 'LinkedIn';
   if (s.startsWith('mantiks_')) return 'Mantiks';
+  if (s.startsWith('builtin_')) return 'BuiltIn';
+  if (s.startsWith('usajobs_')) return 'USAJobs';
   const map = {
     'fantastic_feed': 'Fantastic',
     'linkedin_jobs': 'LinkedIn',
@@ -561,6 +906,7 @@ function collectedFriendlySource(sourceId) {
     'remoteok': 'RemoteOK',
     'rapidapi_jsearch': 'JSearch',
     'rapidapi_mantiks': 'Mantiks',
+    'gracklehq': 'GrackleHQ',
   };
   return map[s] || s;
 }
@@ -570,6 +916,9 @@ function jobIdPrefix(sourceId) {
   if (s.startsWith('fantastic_')) return 'F';
   if (s.startsWith('linkedin_')) return 'L';
   if (s.startsWith('mantiks_')) return 'M';
+  if (s.startsWith('builtin_')) return 'B';
+  if (s.startsWith('usajobs_')) return 'U';
+  if (s === 'gracklehq') return 'G';
   if (s === 'rapidapi_jsearch') return 'J';
   if (s === 'remotive') return 'R';
   return '?';
