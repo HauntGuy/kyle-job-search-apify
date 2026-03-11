@@ -127,14 +127,6 @@ Actor.main(async () => {
     catch (e) { data[k] = { _error: String(e?.message || e) }; }
   }
 
-  let acceptedCsvPreview = '';
-  try {
-    const csv = await kv.getValue('accepted.csv');
-    if (csv) acceptedCsvPreview = String(csv).split('\n').slice(0, 40).join('\n');
-  } catch (e) {
-    acceptedCsvPreview = `Error reading accepted.csv: ${String(e?.message || e)}`;
-  }
-
   const ts = nowIso();
   const runId = input.runId || data['run_meta.json']?.runId || '(unknown runId)';
 
@@ -216,13 +208,46 @@ Actor.main(async () => {
   const unscoredCount = Number(scoringReport?.unscoredCount || 0);
 
   // Build warning banners for issues that need attention (shown at very top of gist)
+  // Mantiks rate-limit warnings are condensed into a single summary line
   const warningBanners = [];
   if (unscoredCount > 0) {
     warningBanners.push(
       `⚠️ ${unscoredCount} job${unscoredCount === 1 ? '' : 's'} remain${unscoredCount === 1 ? 's' : ''} unscored, due to rate limits`
     );
   }
+
+  // Condense Mantiks warnings: group search errors and detail failures into summaries
+  const mantikSearchErrors = [];
+  const mantikDetailFailures = [];
+  const otherWarnings = [];
   for (const w of collectionWarnings) {
+    if (/^mantiks_/.test(w) && w.includes('Search failed')) {
+      // Extract source ID and pages succeeded
+      const match = w.match(/^(mantiks_\w+):.+\((\d+|\?) pages succeeded\)/);
+      if (match) mantikSearchErrors.push({ id: match[1], pages: match[2] });
+      else otherWarnings.push(w);
+    } else if (/^mantiks_/.test(w) && w.includes('detail call')) {
+      const match = w.match(/^(mantiks_\w+): (\d+) job detail/);
+      if (match) mantikDetailFailures.push({ id: match[1], count: Number(match[2]) });
+      else otherWarnings.push(w);
+    } else {
+      otherWarnings.push(w);
+    }
+  }
+
+  if (mantikSearchErrors.length > 0) {
+    const details = mantikSearchErrors.map(e => `${e.id}(${e.pages}pg)`).join(', ');
+    warningBanners.push(
+      `⚠️ Mantiks rate-limited on ${mantikSearchErrors.length} of 9 queries (partial results): ${details}`
+    );
+  }
+  if (mantikDetailFailures.length > 0) {
+    const totalFails = mantikDetailFailures.reduce((s, e) => s + e.count, 0);
+    warningBanners.push(
+      `⚠️ Mantiks: ${totalFails} job detail calls failed across ${mantikDetailFailures.length} queries (those jobs have search-level data only)`
+    );
+  }
+  for (const w of otherWarnings) {
     warningBanners.push(`⚠️ ${w}`);
   }
 
@@ -237,12 +262,28 @@ Actor.main(async () => {
 
   const summarySection = `${bannersHtml}<h2>Summary</h2><ul>${summaryItems.join('')}</ul>`;
 
-  const envCheck = {
-    GIST_ID: gistId ? 'set' : 'missing',
-    GITHUB_TOKEN: ghToken ? 'set' : 'missing',
-    GIST_FILENAME: filename || '(default)',
-    JOBSEARCH_KV_STORE_NAME: process.env.JOBSEARCH_KV_STORE_NAME ? 'set' : 'missing'
-  };
+
+  // Build scoring stats line
+  const openai = scoringReport?.openai || {};
+  const cacheInfo = scoringReport?.scoreCache || {};
+  const scoringStatsLine = [
+    openai.calls != null ? `LLM calls: ${openai.calls}` : null,
+    cacheInfo.cacheHits != null ? `cache hits: ${cacheInfo.cacheHits}` : null,
+    openai.estimatedCostUsd != null ? `cost: $${openai.estimatedCostUsd.toFixed(3)}` : null,
+    scoringReport?.model ? `model: ${scoringReport.model}` : null,
+  ].filter(Boolean).join(' | ');
+
+  // Build pipeline timing
+  const pipelineReport = data['pipeline_report.json'] || {};
+  const pipelineStart = pipelineReport.startedAt;
+  const pipelineEnd = pipelineReport.finishedAt;
+  const pipelineStatus = pipelineReport.status || '(unknown)';
+  let durationLine = '';
+  if (pipelineStart && pipelineEnd) {
+    const durMs = new Date(pipelineEnd) - new Date(pipelineStart);
+    const durMin = (durMs / 60000).toFixed(1);
+    durationLine = `Duration: ${durMin} min | Status: ${pipelineStatus}`;
+  }
 
   const html = `<!doctype html>
 <html>
@@ -257,27 +298,11 @@ Actor.main(async () => {
 </head>
 <body>
   <div class="ts">Updated: ${escHtml(ts)} | Run ID: ${escHtml(runId)}</div>
+  ${durationLine ? `<div class="ts">${escHtml(durationLine)}</div>` : ''}
 
   ${summarySection}
 
-  <h2>Diagnostics actor environment (99_diagnostics_dump only)</h2>
-  ${jsonPre(envCheck)}
-
-  <h2>Reports</h2>
-  <h3>pipeline_report.json</h3>${jsonPre(data['pipeline_report.json'])}
-  <h3>collect_report.json</h3>${jsonPre(data['collect_report.json'])}
-  <h3>merge_report.json</h3>${jsonPre(data['merge_report.json'])}
-  <h3>scoring_report.json</h3>${jsonPre(data['scoring_report.json'])}
-  <h3>notify_report.json</h3>${jsonPre(data['notify_report.json'])}
-
-  <h2>Datasets</h2>
-  <h3>raw_dataset.json</h3>${jsonPre(data['raw_dataset.json'])}
-  <h3>merged_dataset.json</h3>${jsonPre(data['merged_dataset.json'])}
-  <h3>scored_dataset.json</h3>${jsonPre(data['scored_dataset.json'])}
-  <h3>accepted_dataset.json</h3>${jsonPre(data['accepted_dataset.json'])}
-
-  <h2>accepted.csv (preview)</h2>
-  <pre>${escHtml(acceptedCsvPreview || '(none)')}</pre>
+  ${scoringStatsLine ? `<p><b>Scoring:</b> ${escHtml(scoringStatsLine)}</p>` : ''}
 </body>
 </html>`;
 

@@ -99,13 +99,33 @@
       "enabled": false
     },
     {
-      "id": "rapidapi_jsearch",
+      "id": "jsearch_unity",
       "type": "rapidapi_jsearch",
       "enabled": true,
       "requiredEnv": ["RAPIDAPI_KEY"],
       "query": "unity developer in united states",
       "page": 1,
-      "num_pages": 1,
+      "num_pages": 50,
+      "date_posted": "month"
+    },
+    {
+      "id": "jsearch_game_designer",
+      "type": "rapidapi_jsearch",
+      "enabled": true,
+      "requiredEnv": ["RAPIDAPI_KEY"],
+      "query": "game designer in united states",
+      "page": 1,
+      "num_pages": 50,
+      "date_posted": "month"
+    },
+    {
+      "id": "jsearch_game_developer",
+      "type": "rapidapi_jsearch",
+      "enabled": true,
+      "requiredEnv": ["RAPIDAPI_KEY"],
+      "query": "game developer in united states",
+      "page": 1,
+      "num_pages": 50,
       "date_posted": "month"
     },
     {
@@ -208,7 +228,7 @@
       "enabled": true,
       "query": "unity developer",
       "allLocations": true,
-      "maxPages": 5
+      "maxPages": 100
     },
     {
       "id": "builtin_game_dev",
@@ -216,7 +236,7 @@
       "enabled": true,
       "query": "game developer",
       "allLocations": true,
-      "maxPages": 5
+      "maxPages": 100
     },
     {
       "id": "builtin_game_designer",
@@ -224,7 +244,23 @@
       "enabled": true,
       "query": "game designer",
       "allLocations": true,
-      "maxPages": 5
+      "maxPages": 100
+    },
+    {
+      "id": "builtin_level_designer",
+      "type": "builtin",
+      "enabled": true,
+      "query": "level designer",
+      "allLocations": true,
+      "maxPages": 100
+    },
+    {
+      "id": "builtin_gameplay_engineer",
+      "type": "builtin",
+      "enabled": true,
+      "query": "gameplay engineer",
+      "allLocations": true,
+      "maxPages": 100
     },
     {
       "id": "usajobs_gamedev",
