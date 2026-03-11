@@ -791,7 +791,7 @@ async function runRapidApiMantiks(source, knownMantikIds) {
   let searchPagesFetched = 0;
   let searchError = null;
   for (let page = 1; page <= maxPages; page++) {
-    const params = new URLSearchParams({ query, page: String(page), locality });
+    const params = new URLSearchParams({ query, page: String(page), locality, sort: 'date' });
     if (location) params.set('location', location);
 
     const url = `https://indeed12.p.rapidapi.com/jobs/search?${params.toString()}`;
