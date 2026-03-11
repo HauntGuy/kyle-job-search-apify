@@ -933,21 +933,37 @@ Actor.main(async () => {
 
   // --- Scoring helper (reused for initial pass and re-score passes) ---
   async function scoreOneJob(job, idx) {
-    // Check score cache first — reuse evaluation from previous run
-    const cached = lookupCache(cacheMap, job);
-    if (cached?.evaluation) {
-      cacheHits++;
+    // --- Pre-filter gates run BEFORE cache check ---
+    // These gates override cached scores from previous runs, ensuring
+    // that newly-added filters (e.g. Senior/Lead title block) apply
+    // retroactively to jobs that were scored before the filter existed.
+
+    // 1) Title seniority gate — deterministic reject, overrides cache
+    const titleDqReason = titleDisqualifyReason(job.title || '');
+    if (titleDqReason) {
+      titleSkipped += 1;
       return {
         ...job,
-        evaluation: { ...cached.evaluation },
-        scoredAt: cached.scoredAt || nowIso(),
-        cachedFrom: 'previous_run',
+        evaluation: {
+          accept: false,
+          accepted: false,
+          score: 0,
+          confidence: 1.0,
+          location_ok: preLocationMap.get(idx) || computeLocationOk(job.location),
+          reason_short: titleDqReason,
+          reasons: [titleDqReason],
+          red_flags: ['Title disqualified (pre-filter).'],
+          tags: [],
+          salary_extracted: '',
+          company_url: '',
+          role: [],
+        },
+        scoredAt: nowIso(),
       };
     }
 
+    // 2) Location gate — deterministic reject, overrides cache
     const locationOk = preLocationMap.get(idx) || computeLocationOk(job.location);
-
-    // Skip LLM call entirely for location_ok = "no" — deterministic reject
     if (locationOk === 'no') {
       locationSkipped += 1;
       return {
@@ -970,34 +986,9 @@ Actor.main(async () => {
       };
     }
 
-    // Skip LLM call for disqualified titles — deterministic reject
-    const titleDqReason = titleDisqualifyReason(job.title || '');
-    if (titleDqReason) {
-      titleSkipped += 1;
-      return {
-        ...job,
-        evaluation: {
-          accept: false,
-          accepted: false,
-          score: 0,
-          confidence: 1.0,
-          location_ok: locationOk,
-          reason_short: titleDqReason,
-          reasons: [titleDqReason],
-          red_flags: ['Title disqualified (pre-filter).'],
-          tags: [],
-          salary_extracted: '',
-          company_url: '',
-          role: [],
-        },
-        scoredAt: nowIso(),
-      };
-    }
-
-    // Skip LLM call for expired listings — deterministic reject
+    // 3) Expired listing gate — deterministic reject, overrides cache
     if (preExpiredSet.has(idx)) {
       expiredSkipped += 1;
-      const dvt = job.raw?.date_validthrough || '';
       return {
         ...job,
         evaluation: {
@@ -1006,8 +997,8 @@ Actor.main(async () => {
           score: 0,
           confidence: 1.0,
           location_ok: locationOk,
-          reason_short: `Listing expired (date_validthrough=${dvt}).`,
-          reasons: [`Listing expired — date_validthrough=${dvt}.`],
+          reason_short: 'Listing has expired (date_validthrough in the past).',
+          reasons: ['Expired listing.'],
           red_flags: ['Expired listing (pre-filter).'],
           tags: [],
           salary_extracted: '',
@@ -1017,6 +1008,20 @@ Actor.main(async () => {
         scoredAt: nowIso(),
       };
     }
+
+    // --- Cache check (only after all gates pass) ---
+    const cached = lookupCache(cacheMap, job);
+    if (cached?.evaluation) {
+      cacheHits++;
+      return {
+        ...job,
+        evaluation: { ...cached.evaluation },
+        scoredAt: cached.scoredAt || nowIso(),
+        cachedFrom: 'previous_run',
+      };
+    }
+
+    // --- LLM scoring (cache miss, all gates passed) ---
 
     // For location_ok = "yes" or "unknown", send to LLM without location info
     const jobForPrompt = {
