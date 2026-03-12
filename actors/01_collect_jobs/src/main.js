@@ -871,7 +871,7 @@ async function runRapidApiMantiks(source, knownMantikIds) {
   let consecutiveAllKnownPages = 0;
   let earlyStopPage = 0;
   for (let page = 1; page <= maxPages; page++) {
-    const params = new URLSearchParams({ query, page: String(page), locality, sort: 'date' });
+    const params = new URLSearchParams({ query, page: String(page), locality, sort: 'date', fromage: '30' });
     if (location) params.set('location', location);
     if (radius) params.set('radius', radius);
 
@@ -1093,12 +1093,31 @@ Actor.main(async () => {
   const kv = await Actor.openKeyValueStore(kvStoreName);
 
   // Load score cache for Mantiks detail-call skip (reuse previous job details)
+  // mantikIds is stored as {id: isoTimestamp} map with 45-day TTL.
+  // Backward compat: if old format (flat array), migrate to timestamped map.
+  const MANTIK_TTL_DAYS = 45;
+  let mantikIdMap = {};  // {mantikId: isoTimestamp}
   let knownMantikIds = new Set();
   let scoreCache = null;
   try {
     scoreCache = await kv.getValue('score_cache.json');
-    if (scoreCache?.mantikIds && Array.isArray(scoreCache.mantikIds)) {
-      knownMantikIds = new Set(scoreCache.mantikIds);
+    const raw = scoreCache?.mantikIds;
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      // New format: {id: timestamp} — prune stale entries
+      const cutoff = Date.now() - MANTIK_TTL_DAYS * 86400000;
+      for (const [id, ts] of Object.entries(raw)) {
+        if (new Date(ts).getTime() >= cutoff) mantikIdMap[id] = ts;
+      }
+      const pruned = Object.keys(raw).length - Object.keys(mantikIdMap).length;
+      if (pruned > 0) log.info(`Pruned ${pruned} stale Mantiks IDs (older than ${MANTIK_TTL_DAYS} days)`);
+    } else if (Array.isArray(raw)) {
+      // Old format: flat array — migrate (treat existing IDs as seen today)
+      const now = nowIso();
+      for (const id of raw) mantikIdMap[id] = now;
+      log.info(`Migrated ${raw.length} Mantiks IDs from flat array to timestamped map`);
+    }
+    knownMantikIds = new Set(Object.keys(mantikIdMap));
+    if (knownMantikIds.size > 0) {
       log.info(`Loaded ${knownMantikIds.size} cached Mantiks IDs from score_cache.json`);
     }
   } catch { /* no cache yet — first run */ }
@@ -1173,13 +1192,18 @@ Actor.main(async () => {
       // both early termination AND detail-call skipping within the same run.
       if (source.type === 'rapidapi_mantiks') {
         const prevSize = knownMantikIds.size;
+        const now = nowIso();
         for (const job of jobs) {
           for (const sid of (job.sourceJobIds || [])) {
-            if (typeof sid === 'string' && sid.startsWith('M:')) knownMantikIds.add(sid.slice(2));
+            if (typeof sid === 'string' && sid.startsWith('M:')) {
+              const id = sid.slice(2);
+              knownMantikIds.add(id);
+              if (!mantikIdMap[id]) mantikIdMap[id] = now;
+            }
           }
         }
         if (knownMantikIds.size > prevSize) {
-          scoreCache.mantikIds = [...knownMantikIds];
+          scoreCache.mantikIds = mantikIdMap;
           await kv.setValue('score_cache.json', scoreCache);
           log.info(`[${source.id}] Saved ${knownMantikIds.size} Mantiks IDs to score_cache.json (+${knownMantikIds.size - prevSize} new)`);
         }

@@ -1327,21 +1327,40 @@ Actor.main(async () => {
   // Write score_cache.json for next run's cache + Mantiks detail skip
   // Merge new Mantiks IDs with previously cached ones (union, not replace).
   // The collector may also save IDs incrementally — preserve those too.
-  const existingMantikIds = (scoreCache?.mantikIds && Array.isArray(scoreCache.mantikIds))
-    ? scoreCache.mantikIds : [];
-  const mantikIdSet = new Set(existingMantikIds);
+  // Format: {id: isoTimestamp} map with 45-day TTL pruning.
+  const MANTIK_TTL_DAYS = 45;
+  const cutoff = Date.now() - MANTIK_TTL_DAYS * 86400000;
+  const now = new Date().toISOString();
+
+  // Load existing map (handle both new {id:ts} format and old flat array)
+  let mantikIdMap = {};
+  const raw = scoreCache?.mantikIds;
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [id, ts] of Object.entries(raw)) {
+      if (new Date(ts).getTime() >= cutoff) mantikIdMap[id] = ts;
+    }
+  } else if (Array.isArray(raw)) {
+    for (const id of raw) mantikIdMap[id] = now; // migrate old format
+  }
+  const existingCount = Object.keys(mantikIdMap).length;
+
+  // Add new IDs from this run's results
   for (const r of results) {
     for (const sid of (r.sourceJobIds || [])) {
-      if (typeof sid === 'string' && sid.startsWith('M:')) mantikIdSet.add(sid.slice(2));
+      if (typeof sid === 'string' && sid.startsWith('M:')) {
+        const id = sid.slice(2);
+        if (!mantikIdMap[id]) mantikIdMap[id] = now;
+      }
     }
   }
-  const mantikIds = [...mantikIdSet];
-  log.info(`Mantiks cache: ${existingMantikIds.length} existing + ${mantikIdSet.size - existingMantikIds.length} new = ${mantikIds.length} total IDs`);
+  const totalCount = Object.keys(mantikIdMap).length;
+  const prunedFromRaw = raw ? (Array.isArray(raw) ? raw.length : Object.keys(raw).length) - existingCount : 0;
+  log.info(`Mantiks cache: ${existingCount} existing${prunedFromRaw > 0 ? ` (pruned ${prunedFromRaw} stale)` : ''} + ${totalCount - existingCount} new = ${totalCount} total IDs`);
   await kv.setValue('score_cache.json', {
     scoringFormatVersion: SCORING_FORMAT_VERSION,
     rubricVersion: currentRubricVersion,
     scoredDatasetName,
-    mantikIds,
+    mantikIds: mantikIdMap,
     linkedinUrlCache: linkedinUrlCache || {},
     linkedinClosedUrls: [...linkedinClosedCache],
     cachedAt: nowIso(),
