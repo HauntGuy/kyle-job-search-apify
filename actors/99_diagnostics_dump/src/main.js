@@ -153,31 +153,24 @@ Actor.main(async () => {
       const returnedCount = meta.returnedCount;
       const requestedLimit = meta.requestedLimit;
 
-      if (requestedLimit != null && returnedCount != null) {
-        sourceSummaryLines.push(`${id}: returned ${returnedCount} / limit ${requestedLimit}`);
+      // Build timing suffix
+      const timeSuffix = (s.ms != null && s.status !== 'disabled')
+        ? ` (${(s.ms / 1000).toFixed(1)}s)`
+        : '';
+
+      if (s.status === 'disabled') {
+        // skip disabled sources
+        continue;
+      } else if (requestedLimit != null && returnedCount != null) {
+        sourceSummaryLines.push(`${id}: ${returnedCount} / limit ${requestedLimit}${timeSuffix}`);
       } else if (s.itemCount != null) {
-        sourceSummaryLines.push(`${id}: returned ${s.itemCount}`);
+        sourceSummaryLines.push(`${id}: ${s.itemCount} items${timeSuffix}`);
       }
 
       // Source-level errors (entire source failed — 0 jobs collected from it)
       if (s.status === 'error') {
         collectionWarnings.push(
           `${id}: source failed entirely — ${s.error || 'unknown error'}. No jobs were collected from this source.`
-        );
-      }
-
-      // Mantiks partial search (some pages succeeded, then a page failed after retries)
-      if (meta.searchError) {
-        collectionWarnings.push(
-          `${id}: ${meta.searchError}. Results are partial (${meta.searchPagesFetched || '?'} pages succeeded).`
-        );
-      }
-
-      // Mantiks detail failures (search succeeded but some detail calls failed after retries)
-      const detailFails = Number(meta.detailFailures || 0);
-      if (detailFails > 0) {
-        collectionWarnings.push(
-          `${id}: ${detailFails} job detail call${detailFails === 1 ? '' : 's'} failed after retries. Those jobs have no description (search-level data only).`
         );
       }
     }
@@ -210,7 +203,6 @@ Actor.main(async () => {
   const unscoredCount = Number(scoringReport?.unscoredCount || 0);
 
   // Build warning banners for issues that need attention (shown at very top of gist)
-  // Mantiks rate-limit warnings are condensed into a single summary line
   const warningBanners = [];
   if (unscoredCount > 0) {
     warningBanners.push(
@@ -218,38 +210,7 @@ Actor.main(async () => {
     );
   }
 
-  // Condense Mantiks warnings: group search errors and detail failures into summaries
-  const mantikSearchErrors = [];
-  const mantikDetailFailures = [];
-  const otherWarnings = [];
   for (const w of collectionWarnings) {
-    if (/^mantiks_/.test(w) && w.includes('Search failed')) {
-      // Extract source ID and pages succeeded
-      const match = w.match(/^(mantiks_\w+):.+\((\d+|\?) pages succeeded\)/);
-      if (match) mantikSearchErrors.push({ id: match[1], pages: match[2] });
-      else otherWarnings.push(w);
-    } else if (/^mantiks_/.test(w) && w.includes('detail call')) {
-      const match = w.match(/^(mantiks_\w+): (\d+) job detail/);
-      if (match) mantikDetailFailures.push({ id: match[1], count: Number(match[2]) });
-      else otherWarnings.push(w);
-    } else {
-      otherWarnings.push(w);
-    }
-  }
-
-  if (mantikSearchErrors.length > 0) {
-    const details = mantikSearchErrors.map(e => `${e.id}(${e.pages}pg)`).join(', ');
-    warningBanners.push(
-      `⚠️ Mantiks rate-limited on ${mantikSearchErrors.length} of 9 queries (partial results): ${details}`
-    );
-  }
-  if (mantikDetailFailures.length > 0) {
-    const totalFails = mantikDetailFailures.reduce((s, e) => s + e.count, 0);
-    warningBanners.push(
-      `⚠️ Mantiks: ${totalFails} job detail calls failed across ${mantikDetailFailures.length} queries (those jobs have search-level data only)`
-    );
-  }
-  for (const w of otherWarnings) {
     warningBanners.push(`⚠️ ${w}`);
   }
 
