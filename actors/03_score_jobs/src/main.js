@@ -404,13 +404,161 @@ function friendlySourceName(sourceId) {
   const s = String(sourceId);
   if (s.startsWith('fantastic_')) return 'Fantastic';
   if (s.startsWith('linkedin_')) return 'LinkedIn';
-  const map = {
-    'fantastic_feed': 'Fantastic',
-    'linkedin_jobs': 'LinkedIn',
-    'remotive': 'Remotive',
-    'remoteok': 'RemoteOK',
-  };
-  return map[s] || s;
+  if (s.startsWith('builtin_'))  return 'Built In';
+  if (s.startsWith('usajobs_'))  return 'USAJobs';
+  if (s === 'gracklehq')         return 'GrackleHQ';
+  return s;
+}
+
+// --------------- Position Type Detection ---------------
+
+function detectPositionType(job) {
+  // 1. Check employmentType field (set by collector for Fantastic/LinkedIn sources)
+  const et = String(job.employmentType || '').toLowerCase();
+  if (et) {
+    if (et.includes('intern'))                                           return 'Internship';
+    if (et.includes('contract') || et.includes('freelance') || et.includes('temporary')) return 'Contract';
+    if (et.includes('part-time') || et.includes('part time'))            return 'Part-Time';
+    if (et.includes('full-time') || et.includes('full time'))            return 'Full-Time';
+  }
+
+  // 2. Check job title
+  const title = String(job.title || '');
+  if (/\bintern(ship)?\b/i.test(title))                                 return 'Internship';
+  if (/\b(contract|contractor|freelance)\b/i.test(title))               return 'Contract';
+  if (/\bpart[\s-]?time\b/i.test(title))                                return 'Part-Time';
+
+  // 3. Check description (first 2000 chars for performance)
+  const desc = String(job.description || '').slice(0, 2000).toLowerCase();
+  if (/\binternship\b/.test(desc) && /\bintern\b/.test(desc))           return 'Internship';
+  if (/\b(contract position|contract role|independent contractor|1099)\b/.test(desc)) return 'Contract';
+  if (/\bpart[\s-]?time\b/.test(desc) && !/\bfull[\s-]?time\b/.test(desc)) return 'Part-Time';
+
+  return 'Full-Time';
+}
+
+// --------------- Remote Status Enrichment ---------------
+
+function enrichRemoteStatus(job) {
+  const loc = String(job.location || '');
+  if (/\bremote\b/i.test(loc)) return; // already tagged
+
+  let isRemote = false;
+
+  // Check employmentType for "Remote"
+  const et = String(job.employmentType || '').toLowerCase();
+  if (et.includes('remote')) isRemote = true;
+
+  // Check description for strong remote signals
+  if (!isRemote) {
+    const desc = String(job.description || '').slice(0, 3000).toLowerCase();
+    isRemote = [
+      /\bremote position\b/, /\bremote role\b/, /\bwork remotely\b/,
+      /\bfully remote\b/, /\b100% remote\b/, /\bremote[\s-]?first\b/,
+      /\bremote work\b/, /\bremote opportunity\b/,
+    ].some(p => p.test(desc));
+  }
+
+  if (isRemote) {
+    job.location = loc ? `Remote | ${loc}` : 'Remote';
+  }
+}
+
+// --------------- Location Formatting ---------------
+
+const US_STATE_ABBREVS = {
+  'alabama': 'AL', 'alaska': 'AK', 'arizona': 'AZ', 'arkansas': 'AR',
+  'california': 'CA', 'colorado': 'CO', 'connecticut': 'CT', 'delaware': 'DE',
+  'florida': 'FL', 'georgia': 'GA', 'hawaii': 'HI', 'idaho': 'ID',
+  'illinois': 'IL', 'indiana': 'IN', 'iowa': 'IA', 'kansas': 'KS',
+  'kentucky': 'KY', 'louisiana': 'LA', 'maine': 'ME', 'maryland': 'MD',
+  'massachusetts': 'MA', 'michigan': 'MI', 'minnesota': 'MN', 'mississippi': 'MS',
+  'missouri': 'MO', 'montana': 'MT', 'nebraska': 'NE', 'nevada': 'NV',
+  'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY',
+  'north carolina': 'NC', 'north dakota': 'ND', 'ohio': 'OH', 'oklahoma': 'OK',
+  'oregon': 'OR', 'pennsylvania': 'PA', 'rhode island': 'RI', 'south carolina': 'SC',
+  'south dakota': 'SD', 'tennessee': 'TN', 'texas': 'TX', 'utah': 'UT',
+  'vermont': 'VT', 'virginia': 'VA', 'washington': 'WA', 'west virginia': 'WV',
+  'wisconsin': 'WI', 'wyoming': 'WY', 'district of columbia': 'DC',
+};
+const STATE_ABBREV_SET = new Set(Object.values(US_STATE_ABBREVS));
+
+const MA_INDICATORS = ['massachusetts', ' ma', 'boston', 'lexington', 'cambridge',
+  'waltham', 'woburn', 'burlington', 'bedford', 'concord', 'framingham'];
+
+/** Format a single location part (no pipes). */
+function formatLocationPart(part) {
+  const trimmed = part.trim();
+  if (!trimmed) return '';
+
+  const segments = trimmed.split(',').map(s => s.trim()).filter(Boolean);
+  if (segments.length === 0) return trimmed;
+
+  let city = '';
+  let stateAbbrev = '';
+  let hasUS = false;
+
+  for (const seg of segments) {
+    const lower = seg.toLowerCase();
+    if (['united states', 'usa', 'us', 'united states of america'].includes(lower)) {
+      hasUS = true;
+      continue;
+    }
+    if (US_STATE_ABBREVS[lower]) {
+      stateAbbrev = US_STATE_ABBREVS[lower];
+      continue;
+    }
+    if (seg.length === 2 && STATE_ABBREV_SET.has(seg.toUpperCase())) {
+      stateAbbrev = seg.toUpperCase();
+      continue;
+    }
+    if (!city) city = seg;
+  }
+
+  if (stateAbbrev) return city ? `${city} ${stateAbbrev}` : stateAbbrev;
+  if (hasUS) return city || 'US';
+
+  // Foreign: if last segment is a 2-3 letter country code, show only that
+  const last = segments[segments.length - 1];
+  if (/^[A-Z]{2,3}$/.test(last) && segments.length >= 2) return last;
+
+  // Fallback: rejoin without commas
+  return segments.join(' ');
+}
+
+/** Format location for XLSX display. Handles pipes and semicolons. */
+function formatLocation(location) {
+  const loc = String(location || '').trim();
+  if (!loc) return '';
+
+  const pipeParts = loc.split('|').map(s => s.trim()).filter(Boolean);
+  const prefixes = [];
+  const locationParts = [];
+
+  for (const pp of pipeParts) {
+    if (/^(remote|hybrid)$/i.test(pp)) {
+      prefixes.push(pp.charAt(0).toUpperCase() + pp.slice(1).toLowerCase());
+    } else {
+      locationParts.push(...pp.split(';').map(s => s.trim()).filter(Boolean));
+    }
+  }
+
+  if (locationParts.length === 0) return prefixes.join(' | ') || loc;
+
+  // Multi-location: prefer MA-relevant
+  let chosen;
+  if (locationParts.length > 1) {
+    const maMatch = locationParts.find(p => {
+      const lower = ` ${p.toLowerCase()} `;
+      return MA_INDICATORS.some(ind => lower.includes(ind));
+    });
+    chosen = maMatch || locationParts[0];
+  } else {
+    chosen = locationParts[0];
+  }
+
+  const formatted = formatLocationPart(chosen);
+  return prefixes.length ? `${prefixes.join(' | ')} | ${formatted}` : formatted;
 }
 
 function extractRootDomainUrl(urlStr) {
@@ -663,31 +811,38 @@ async function buildScoredXlsx(jobs, {
   includeJobIds = false,
   scoringFormatVersion = null,
   rubricVersion = null,
+  isAcceptedSheet = false,
 } = {}) {
   const workbook = new ExcelJS.Workbook();
   const ws = workbook.addWorksheet('Jobs');
 
-  // Define column headers and widths
+  // Define column headers, widths, and keys — conditionally include some columns
   const colDefs = [
-    { header: 'Company',      width: 26 },
-    { header: 'Job Title',    width: 46 },
-    { header: 'Salary',       width: 26 },
-    { header: 'Where',        width: 36 },
-    { header: 'Score',        width: 8  },
-    { header: 'Role',         width: 22 },
-    { header: 'Age (days)',   width: 11 },
-    { header: 'Where Found',  width: 19 },
-    { header: 'Sources',      width: 19 },
-    { header: 'Reason',       width: 52 },
-    { header: 'Tags',         width: 36 },
-    { header: 'Red Flags',    width: 42 },
+    { header: 'Company',       width: 26, key: 'company' },
+    { header: 'Job Title',     width: 46, key: 'title' },
+    { header: 'Salary',        width: 26, key: 'salary' },
+    { header: 'Where',         width: 36, key: 'where' },
+    { header: 'Position Type', width: 14, key: 'positionType' },
   ];
-
+  if (!isAcceptedSheet) {
+    colDefs.push({ header: 'Score', width: 8, key: 'score' });
+    colDefs.push({ header: 'Role',  width: 22, key: 'role' });
+  }
+  colDefs.push({ header: 'Age (days)',  width: 11, key: 'age' });
+  colDefs.push({ header: 'Where Found', width: 19, key: 'whereFound' });
+  if (!isAcceptedSheet) {
+    colDefs.push({ header: 'Sources', width: 19, key: 'sources' });
+  }
+  colDefs.push({ header: 'Reason',    width: 52, key: 'reason' });
+  if (!isAcceptedSheet) {
+    colDefs.push({ header: 'Tags', width: 36, key: 'tags' });
+  }
+  colDefs.push({ header: 'Red Flags', width: 42, key: 'redFlags' });
   if (includeSearchTerms) {
-    colDefs.push({ header: 'Search Terms', width: 40 });
+    colDefs.push({ header: 'Search Terms', width: 40, key: 'searchTerms' });
   }
   if (includeJobIds) {
-    colDefs.push({ header: 'Job IDs', width: 30 });
+    colDefs.push({ header: 'Job IDs', width: 30, key: 'jobIds' });
   }
 
   // Set column widths only (don't use ws.columns with header — it auto-creates row 1)
@@ -698,7 +853,6 @@ async function buildScoredXlsx(jobs, {
   // Metadata row (scored.xlsx only — when version info is provided)
   const hasMetaRow = !!(scoringFormatVersion || rubricVersion);
   if (hasMetaRow) {
-    // Row 1: "Scoring Format:" | "v1" | "Rubric" | "v13"
     const metaRow = ws.addRow([
       'Scoring Format:', scoringFormatVersion || '',
       'Rubric', rubricVersion || '',
@@ -714,6 +868,12 @@ async function buildScoredXlsx(jobs, {
   const freezeYSplit = hasMetaRow ? 2 : 1;
   ws.views = [{ state: 'frozen', xSplit: 2, ySplit: freezeYSplit }];
 
+  // Pre-compute column indices for hyperlinks
+  const colIdx = (key) => colDefs.findIndex(c => c.key === key) + 1;
+  const companyCol = colIdx('company');
+  const titleCol = colIdx('title');
+  const whereFoundCol = colIdx('whereFound');
+
   for (const j of jobs) {
     const ev = j.evaluation || {};
     const tags = Array.isArray(ev.tags) ? ev.tags.join('; ') : '';
@@ -721,50 +881,47 @@ async function buildScoredXlsx(jobs, {
     const roleStr = Array.isArray(ev.role) ? ev.role.join(', ') : (ev.role || '');
 
     const salary = formatSalary(j.salary || ev.salary_extracted || '');
-    const where = j.location || '';
+    const where = formatLocation(j.location);
     const score = ev.score ?? 0;
     const ageDays = calculateAgeDays(j.earliestPostedAt || j.postedAt);
     const sourcesArr = Array.isArray(j.sources) ? j.sources : [j.source].filter(Boolean);
     const sourcesStr = sourcesArr.map(friendlySourceName).filter(Boolean).join(', ');
     const reason = ev.reason_short || '';
+    const positionType = j.positionType || 'Full-Time';
 
-    const rowData = [
-      j.company || '',                     // 1: Company (will become hyperlink)
-      j.title || '',                       // 2: Job Title (will become hyperlink)
-      salary,                              // 3: Salary
-      where,                               // 4: Where
-      score,                               // 5: Score
-      roleStr,                             // 6: Role
-      ageDays === '' ? '' : ageDays,       // 7: Age (days)
-      '',                                  // 8: Where Found (will become hyperlink)
-      sourcesStr,                          // 9: Sources
-      reason,                              // 10: Reason
-      tags,                                // 11: Tags
-      redFlags,                            // 12: Red Flags
-    ];
+    const valueMap = {
+      company:      j.company || '',
+      title:        j.title || '',
+      salary,
+      where,
+      positionType,
+      score,
+      role:         roleStr,
+      age:          ageDays === '' ? '' : ageDays,
+      whereFound:   '',  // will become hyperlink
+      sources:      sourcesStr,
+      reason,
+      tags,
+      redFlags,
+      searchTerms:  (j.searchTerms || []).join('; '),
+      jobIds:       (j.sourceJobIds || []).join(', '),
+    };
 
-    if (includeSearchTerms) {
-      rowData.push((j.searchTerms || []).join('; '));
-    }
-    if (includeJobIds) {
-      rowData.push((j.sourceJobIds || []).join(', '));
-    }
-
-    const row = ws.addRow(rowData);
+    const row = ws.addRow(colDefs.map(c => valueMap[c.key]));
 
     // Company hyperlink
     const companyUrl = j.companyUrl || ev.company_url || '';
-    setCellHyperlink(row.getCell(1), companyUrl, j.company || '');
+    setCellHyperlink(row.getCell(companyCol), companyUrl, j.company || '');
 
     // Job Title hyperlink
     const jobUrl = j.applyUrl || j.url || '';
-    setCellHyperlink(row.getCell(2), jobUrl, j.title || '');
+    setCellHyperlink(row.getCell(titleCol), jobUrl, j.title || '');
 
     // Where Found hyperlink
     const foundUrl = j.url || j.applyUrl || '';
     const rootUrl = extractRootDomainUrl(foundUrl);
     const foundName = friendlyDomainName(foundUrl, j.company);
-    setCellHyperlink(row.getCell(8), rootUrl, foundName);
+    setCellHyperlink(row.getCell(whereFoundCol), rootUrl, foundName);
   }
 
   return await workbook.xlsx.writeBuffer();
@@ -877,6 +1034,16 @@ Actor.main(async () => {
     inputTokens: 0,
     outputTokens: 0,
   };
+
+  // --- Pre-LLM enrichment: detect position type and remote status ---
+  for (const job of mergedJobs) {
+    job.positionType = detectPositionType(job);
+    // Enrich employmentType so the LLM sees it in the prompt
+    if (!job.employmentType && job.positionType !== 'Full-Time') {
+      job.employmentType = job.positionType;
+    }
+    enrichRemoteStatus(job); // must be before computeLocationOk
+  }
 
   // --- Pre-compute location for all jobs and skip location_ok = "no" ---
   let locationSkipped = 0;
@@ -1225,7 +1392,7 @@ Actor.main(async () => {
 
   // Sort accepted jobs by score descending so best matches appear first
   const acceptedSorted = [...acceptedJobs].sort((a, b) => (b.evaluation?.score ?? 0) - (a.evaluation?.score ?? 0));
-  const acceptedXlsx = await buildScoredXlsx(acceptedSorted);
+  const acceptedXlsx = await buildScoredXlsx(acceptedSorted, { isAcceptedSheet: true });
   await kv.setValue('accepted.xlsx', acceptedXlsx, { contentType: xlsxContentType });
 
   // scored.xlsx contains ALL scored jobs (accepted + rejected) for review

@@ -1,4 +1,4 @@
-# Rubric: Kyle job search (v14)
+# Rubric: Kyle job search (v15)
 
 Evaluate a job posting for **Kyle Forgaard**. Return JSON with: `accept` (bool), `score` (0–100), `confidence` (0.0–1.0), `reason_short` (1 sentence), `reasons` (short bullets), `red_flags` (short bullets), `tags` (short tags), `salary_extracted` (string or ""), `company_url` (string or ""), `role` (array from: "Game Designer", "Programmer", "EdTech", "App Support", "Customer Success" — may combine). **`role` rules:** Use "Programmer" ONLY for roles where the primary job duty is writing code (Unity dev, C# dev, gameplay engineer). Solutions Engineer, Sales Engineer, Implementation roles, and Support roles are NOT "Programmer" — classify them as "Customer Success" or "App Support".
 
@@ -24,7 +24,7 @@ Unity is not just for games — it's used in EdTech, architecture, healthcare, a
 **Tier 1 — Game Designer** (best possible fit, score 95–100):
 Game Designer, Level Designer, Systems Designer, Combat Designer, Economy Designer, Technical Game Designer. These are rare and highly competitive — always accept them.
 
-**Internships:** Score internships at **max 75**, even for Tier 1/2 roles. Kyle is 33 years old with 7 years of professional experience — internships target recent college graduates and are low-probability leads. Accept them (they're worth tracking) but don't score them higher than 75.
+**Internships:** Score internships at **max 65**, even for Tier 1/2 roles. Kyle is 33 years old with 7 years of professional experience — internships target recent college graduates and are not worth tracking. Do not score them higher than 65.
 
 **Tier 2 — Programmer** (strongest technical fit, score 85–95):
 Unity Developer, C# client-side (WPF/MAUI/Avalonia), Gameplay Engineer, UI Programmer, Tools Engineer, Technical Designer with scripting.

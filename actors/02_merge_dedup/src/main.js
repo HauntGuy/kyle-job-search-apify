@@ -119,9 +119,9 @@ function jobIdPrefix(sourceId) {
   const s = String(sourceId || '');
   if (s.startsWith('fantastic_')) return 'F';
   if (s.startsWith('linkedin_')) return 'L';
-  if (s.startsWith('mantiks_')) return 'M';
-  if (s === 'rapidapi_jsearch') return 'J';
-  if (s === 'remotive') return 'R';
+  if (s.startsWith('builtin_')) return 'B';
+  if (s.startsWith('usajobs_')) return 'U';
+  if (s === 'gracklehq') return 'G';
   return '?';
 }
 

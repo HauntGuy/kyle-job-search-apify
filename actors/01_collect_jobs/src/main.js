@@ -779,7 +779,6 @@ function jobIdPrefix(sourceId) {
   if (s.startsWith('builtin_')) return 'B';
   if (s.startsWith('usajobs_')) return 'U';
   if (s === 'gracklehq') return 'G';
-  if (s === 'remotive') return 'R';
   return '?';
 }
 
@@ -807,15 +806,16 @@ async function buildCollectedXlsx(jobs) {
   const ws = workbook.addWorksheet('Collected');
 
   ws.columns = [
-    { header: 'Source',       width: 14 },
-    { header: 'Company',      width: 26 },
-    { header: 'Job Title',    width: 46 },
-    { header: 'Location',     width: 36 },
-    { header: 'Salary',       width: 22 },
-    { header: 'Posted At',    width: 22 },
-    { header: 'URL',          width: 50 },
-    { header: 'Search Terms', width: 40 },
-    { header: 'Job IDs',      width: 30 },
+    { header: 'Source',        width: 14 },
+    { header: 'Company',       width: 26 },
+    { header: 'Job Title',     width: 46 },
+    { header: 'Location',      width: 36 },
+    { header: 'Position Type', width: 14 },
+    { header: 'Salary',        width: 22 },
+    { header: 'Posted At',     width: 22 },
+    { header: 'URL',           width: 50 },
+    { header: 'Search Terms',  width: 40 },
+    { header: 'Job IDs',       width: 30 },
   ];
 
   // Bold header row
@@ -831,6 +831,7 @@ async function buildCollectedXlsx(jobs) {
       j.company || '',
       j.title || '',            // will become hyperlink
       j.location || '',
+      j.employmentType || '',
       j.salary || '',
       j.postedAt || '',
       j.url || j.applyUrl || '',
