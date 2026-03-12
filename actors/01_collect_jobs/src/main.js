@@ -871,7 +871,7 @@ async function runRapidApiMantiks(source, knownMantikIds) {
   let consecutiveAllKnownPages = 0;
   let earlyStopPage = 0;
   for (let page = 1; page <= maxPages; page++) {
-    const params = new URLSearchParams({ query, page: String(page), locality, sort: 'date', fromage: '30' });
+    const params = new URLSearchParams({ query, page: String(page), locality, sort: 'date', fromage: '14' });
     if (location) params.set('location', location);
     if (radius) params.set('radius', radius);
 
