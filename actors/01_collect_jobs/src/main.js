@@ -183,35 +183,7 @@ function normalizeFantasticFeed(sourceId, raw) {
   return out;
 }
 
-function normalizeJSearch(sourceId, raw) {
-  const title = firstString(raw.job_title, raw.title);
-  const company = firstString(raw.employer_name, raw.company_name, raw.company);
-  const location = firstString(raw.job_location, [raw.job_city, raw.job_state, raw.job_country].filter(Boolean).join(', '));
-  const url = firstString(raw.job_google_link, raw.job_apply_link, raw.job_link);
-  const applyUrl = firstString(raw.job_apply_link, raw.job_google_link, url);
-  const postedAt = firstString(raw.job_posted_at_datetime_utc, raw.job_posted_at_timestamp);
-  const description = firstString(raw.job_description);
-  const employmentType = firstString(raw.job_employment_type);
-  const salary = firstString(raw.job_salary, raw.job_min_salary && raw.job_max_salary ? `${raw.job_min_salary}-${raw.job_max_salary}` : '');
-  const companyUrl = firstString(raw.employer_website, raw.employer_company_url, raw.company_url);
 
-  return {
-    source: sourceId,
-    fetchedAt: nowIso(),
-    title,
-    company,
-    companyUrl: canonicalizeUrl(companyUrl),
-    location,
-    url: canonicalizeUrl(url),
-    applyUrl: canonicalizeUrl(applyUrl),
-    postedAt: toIsoOrEmpty(postedAt),
-    description,
-    employmentType,
-    salary,
-    raw,
-    sourceJobId: firstString(raw.job_id),
-  };
-}
 
 async function listDatasetItems(datasetId, limit) {
   const client = Actor.apifyClient;
@@ -342,43 +314,6 @@ async function runApifyActorSource(source, globalMaxItemsPerSource, remaining) {
       itemCount: jobs.length
     }
   };
-}
-
-async function runRapidApiJSearch(source) {
-  const apiKey = getEnvOrNull('RAPIDAPI_KEY');
-  if (!apiKey) throw new Error(`[${source.id}] Missing RAPIDAPI_KEY env var`);
-
-  const query = String(source.query || '').trim();
-  if (!query) throw new Error(`[${source.id}] Missing source.query`);
-
-  const page = Number(source.page || 1) || 1;
-  const numPages = Number(source.num_pages || 1) || 1;
-  const datePosted = String(source.date_posted || 'all');
-
-  const params = new URLSearchParams({
-    query,
-    page: String(page),
-    num_pages: String(numPages),
-    date_posted: datePosted,
-  });
-
-  const url = `https://jsearch.p.rapidapi.com/search?${params.toString()}`;
-  log.info(`[${source.id}] GET ${url}`);
-
-  const headers = {
-    'X-RapidAPI-Key': apiKey,
-    'X-RapidAPI-Host': 'jsearch.p.rapidapi.com',
-  };
-  const json = await withRetries(
-    () => fetchJsonRetryable(url, headers),
-    { retries: 3, baseMs: 2000, maxMs: 15000, label: source.id },
-  );
-
-  const items = Array.isArray(json?.data) ? json.data : [];
-  const totalAvailable = json?.parameters?.total || null;
-  const jobs = items.map((it) => normalizeJSearch(source.id, it));
-  const hitCap = totalAvailable != null && items.length < totalAvailable;
-  return { jobs, meta: { itemCount: jobs.length, totalAvailable, numPages: numPages, hitCap } };
 }
 
 async function runRemotive(source) {
@@ -804,180 +739,11 @@ async function runUSAJobs(source) {
 
 // --------------- Mantiks Indeed API (indeed12.p.rapidapi.com) ---------------
 
-function normalizeMantiks(sourceId, hit, detail) {
-  const d = detail || {};
-  const title = firstString(d.title, hit.title);
-  const company = firstString(d.company_name, hit.company_name, d.company, hit.company);
-  const location = firstString(d.location, hit.location);
-  let url = firstString(d.url, hit.url, d.link, hit.link);
-  const salary = firstString(d.salary_text, hit.salary_text, d.salary, hit.salary);
-  const postedAt = firstString(d.date_posted, hit.date_posted, d.posted_at, hit.posted_at);
-  const companyUrl = firstString(d.company_url, hit.company_url);
-
-  // Mantiks API often returns relative paths like "/job/{id}?locality=us" with no domain.
-  // Construct a proper Indeed URL since Mantiks scrapes Indeed.
-  const jobId = String(hit.id || '').trim();
-  if (jobId && (!url || !url.startsWith('http'))) {
-    url = `https://www.indeed.com/viewjob?jk=${encodeURIComponent(jobId)}`;
-  }
-
-  // Strip HTML tags from description
-  let description = firstString(d.description, hit.description);
-  if (description) {
-    description = description.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 15000);
-  }
-
-  return {
-    source: sourceId,
-    fetchedAt: nowIso(),
-    title,
-    company,
-    companyUrl: canonicalizeUrl(companyUrl),
-    location,
-    url: canonicalizeUrl(url),
-    applyUrl: canonicalizeUrl(url),
-    postedAt: toIsoOrEmpty(postedAt),
-    description: description || '',
-    salary,
-    sourceJobId: String(hit.id || ''),
-    raw: hit,
-  };
-}
-
-async function runRapidApiMantiks(source, knownMantikIds) {
-  const apiKey = getEnvOrNull('RAPIDAPI_KEY');
-  if (!apiKey) throw new Error(`[${source.id}] Missing RAPIDAPI_KEY env var`);
-
-  const query = String(source.query || '').trim();
-  if (!query) throw new Error(`[${source.id}] Missing source.query`);
-
-  const location = String(source.location || '').trim();
-  const locality = String(source.locality || 'us').trim();
-  const radius = source.radius != null ? String(source.radius).trim() : '';
-  const maxPages = Number(source.pages || 1) || 1;
-  const knownIds = knownMantikIds || new Set();
-
-  const headers = {
-    'X-RapidAPI-Key': apiKey,
-    'X-RapidAPI-Host': 'indeed12.p.rapidapi.com',
-  };
-
-  // --- Search phase: discover jobs ---
-  // If sort is configured (e.g. "date"), results come newest-first.
-  // Stop early if 2 consecutive pages have ALL known job IDs (nothing new left).
-  // A failed page stops pagination but keeps already-fetched pages (partial results).
-  const sortParam = source.sort || '';  // e.g. "date" — omit to use Indeed's default relevance sort
-  const allHits = [];
-  let searchPagesFetched = 0;
-  let searchError = null;
-  let consecutiveAllKnownPages = 0;
-  let earlyStopPage = 0;
-  for (let page = 1; page <= maxPages; page++) {
-    const params = new URLSearchParams({ query, page: String(page), locality, fromage: '14' });
-    if (sortParam) params.set('sort', sortParam);
-    if (location) params.set('location', location);
-    if (radius) params.set('radius', radius);
-
-    const url = `https://indeed12.p.rapidapi.com/jobs/search?${params.toString()}`;
-    log.info(`[${source.id}] GET ${url} (page ${page}/${maxPages})`);
-
-    try {
-      const json = await withRetries(
-        () => fetchJsonRetryable(url, headers),
-        { retries: 3, baseMs: 6000, maxMs: 60000, label: `${source.id} search` },
-      );
-
-      const hits = Array.isArray(json) ? json : (json?.hits || json?.results || json?.data || []);
-      if (hits.length === 0) break;
-      allHits.push(...hits);
-      searchPagesFetched++;
-
-      // Early termination: if every job on this page is already cached, increment counter.
-      const allKnown = hits.length > 0 && hits.every(h => knownIds.has(String(h.id || '').trim()));
-      consecutiveAllKnownPages = allKnown ? consecutiveAllKnownPages + 1 : 0;
-      if (consecutiveAllKnownPages >= 2) {
-        earlyStopPage = page;
-        log.info(`[${source.id}] Early stop: 2 consecutive all-cached pages (${page - 1} & ${page}). Skipping remaining pages.`);
-        break;
-      }
-    } catch (err) {
-      searchError = `Search failed on page ${page}/${maxPages} after retries: ${err?.message || err}`;
-      log.warning(`[${source.id}] ${searchError}. Keeping ${allHits.length} results from pages 1-${page - 1}.`);
-      break;
-    }
-  }
-
-  const stopReason = earlyStopPage ? `, early-stopped at page ${earlyStopPage}` : '';
-  log.info(`[${source.id}] Search returned ${allHits.length} results (${searchPagesFetched} pages${stopReason}). Fetching details for new jobs…`);
-
-  // --- Detail phase: fetch full descriptions for NEW jobs only ---
-  const uniqueNewHits = [];
-  const seenIds = new Set();
-  let detailsSkipped = 0;
-  for (const hit of allHits) {
-    const id = String(hit.id || '').trim();
-    if (!id) continue;
-    if (knownIds.has(id) || seenIds.has(id)) { detailsSkipped++; continue; }
-    seenIds.add(id);
-    uniqueNewHits.push(hit);
-  }
-
-  const detailMap = new Map();
-  const { results: detailResults, failures, stats: detailStats } = await processWithRetries(
-    uniqueNewHits,
-    async (hit) => {
-      const id = String(hit.id || '').trim();
-      const detailUrl = `https://indeed12.p.rapidapi.com/job/${encodeURIComponent(id)}?locality=${locality}`;
-      log.info(`[${source.id}] Detail: ${detailUrl}`);
-      return await fetchJsonRetryable(detailUrl, headers);
-    },
-    { concurrency: 3, retries: 3, baseMs: 6000, maxMs: 60000,
-      retryPasses: 1, retryCooldownMs: 10000, label: `${source.id} detail` },
-  );
-
-  // Collect successful details
-  const detailsFetched = uniqueNewHits.length - failures.length;
-  for (let i = 0; i < uniqueNewHits.length; i++) {
-    const id = String(uniqueNewHits[i].id || '').trim();
-    if (detailResults[i] && typeof detailResults[i] === 'object') {
-      detailMap.set(id, detailResults[i]);
-    }
-  }
-  if (failures.length > 0) {
-    log.warning(`[${source.id}] ${failures.length} detail calls failed after retries.`);
-  }
-  log.info(`[${source.id}] Details: ${detailsFetched} fetched, ${detailsSkipped} skipped (cached).`);
-
-  const jobs = allHits.map((hit) => {
-    const detail = detailMap.get(String(hit.id || '').trim()) || null;
-    return normalizeMantiks(source.id, hit, detail);
-  });
-
-  const hitCap = searchPagesFetched >= maxPages && !earlyStopPage;
-  return {
-    jobs,
-    meta: {
-      itemCount: jobs.length,
-      searchPagesFetched,
-      maxPages,
-      earlyStopPage: earlyStopPage || undefined,
-      searchError: searchError || undefined,
-      detailsFetched,
-      detailsSkipped,
-      detailFailures: failures.length,
-      detailRetries: detailStats.retries,
-      hitCap,
-    },
-  };
-}
-
-async function runSource(source, config, remaining, knownMantikIds) {
+async function runSource(source, config, remaining) {
   const globalMax = Number(config?.run?.maxItemsPerSource || 300) || 300;
   const type = String(source.type || '').toLowerCase();
 
   if (type === 'apify_actor') return await runApifyActorSource(source, globalMax, remaining);
-  if (type === 'rapidapi_jsearch') return await runRapidApiJSearch(source);
-  if (type === 'rapidapi_mantiks') return await runRapidApiMantiks(source, knownMantikIds);
   if (type === 'remotive') return await runRemotive(source);
   if (type === 'remoteok') return await runRemoteOk(source);
   if (type === 'gracklehq') return await runGrackleHQ(source);
@@ -994,7 +760,6 @@ function collectedFriendlySource(sourceId) {
   const s = String(sourceId);
   if (s.startsWith('fantastic_')) return 'Fantastic';
   if (s.startsWith('linkedin_')) return 'LinkedIn';
-  if (s.startsWith('mantiks_')) return 'Mantiks';
   if (s.startsWith('builtin_')) return 'BuiltIn';
   if (s.startsWith('usajobs_')) return 'USAJobs';
   const map = {
@@ -1002,8 +767,6 @@ function collectedFriendlySource(sourceId) {
     'linkedin_jobs': 'LinkedIn',
     'remotive': 'Remotive',
     'remoteok': 'RemoteOK',
-    'rapidapi_jsearch': 'JSearch',
-    'rapidapi_mantiks': 'Mantiks',
     'gracklehq': 'GrackleHQ',
   };
   return map[s] || s;
@@ -1013,11 +776,9 @@ function jobIdPrefix(sourceId) {
   const s = String(sourceId || '');
   if (s.startsWith('fantastic_')) return 'F';
   if (s.startsWith('linkedin_')) return 'L';
-  if (s.startsWith('mantiks_')) return 'M';
   if (s.startsWith('builtin_')) return 'B';
   if (s.startsWith('usajobs_')) return 'U';
   if (s === 'gracklehq') return 'G';
-  if (s === 'rapidapi_jsearch') return 'J';
   if (s === 'remotive') return 'R';
   return '?';
 }
@@ -1095,37 +856,6 @@ Actor.main(async () => {
 
   const kv = await Actor.openKeyValueStore(kvStoreName);
 
-  // Load score cache for Mantiks detail-call skip (reuse previous job details)
-  // mantikIds is stored as {id: isoTimestamp} map with 45-day TTL.
-  // Backward compat: if old format (flat array), migrate to timestamped map.
-  const MANTIK_TTL_DAYS = 45;
-  let mantikIdMap = {};  // {mantikId: isoTimestamp}
-  let knownMantikIds = new Set();
-  let scoreCache = null;
-  try {
-    scoreCache = await kv.getValue('score_cache.json');
-    const raw = scoreCache?.mantikIds;
-    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-      // New format: {id: timestamp} — prune stale entries
-      const cutoff = Date.now() - MANTIK_TTL_DAYS * 86400000;
-      for (const [id, ts] of Object.entries(raw)) {
-        if (new Date(ts).getTime() >= cutoff) mantikIdMap[id] = ts;
-      }
-      const pruned = Object.keys(raw).length - Object.keys(mantikIdMap).length;
-      if (pruned > 0) log.info(`Pruned ${pruned} stale Mantiks IDs (older than ${MANTIK_TTL_DAYS} days)`);
-    } else if (Array.isArray(raw)) {
-      // Old format: flat array — migrate (treat existing IDs as seen today)
-      const now = nowIso();
-      for (const id of raw) mantikIdMap[id] = now;
-      log.info(`Migrated ${raw.length} Mantiks IDs from flat array to timestamped map`);
-    }
-    knownMantikIds = new Set(Object.keys(mantikIdMap));
-    if (knownMantikIds.size > 0) {
-      log.info(`Loaded ${knownMantikIds.size} cached Mantiks IDs from score_cache.json`);
-    }
-  } catch { /* no cache yet — first run */ }
-  if (!scoreCache) scoreCache = {};
-
   const rawDatasetName = datasetName(datasetPrefix, 'raw', runId);
   const rawDataset = await Actor.openDataset(rawDatasetName);
 
@@ -1164,7 +894,7 @@ Actor.main(async () => {
     const started = Date.now();
     try {
       const remaining = Math.max(0, maxTotal - allJobs.length);
-      const { jobs, meta } = await runSource(source, config, remaining, knownMantikIds);
+      const { jobs, meta } = await runSource(source, config, remaining);
 
       const remaining2 = Math.max(0, maxTotal - allJobs.length);
       const trimmed = remaining2 > 0 ? jobs.slice(0, remaining2) : [];
@@ -1188,29 +918,6 @@ Actor.main(async () => {
       });
 
       report.totals.collected += jobs.length;
-
-      // After each Mantiks source, save new IDs to score_cache.json incrementally.
-      // This ensures IDs survive even if the run crashes or is aborted later.
-      // Bonus: later Mantiks queries benefit from earlier queries' IDs for
-      // both early termination AND detail-call skipping within the same run.
-      if (source.type === 'rapidapi_mantiks') {
-        const prevSize = knownMantikIds.size;
-        const now = nowIso();
-        for (const job of jobs) {
-          // In the collector, jobs have sourceJobId (singular, no prefix).
-          // The merger later converts to sourceJobIds (plural, with M: prefix).
-          const rawId = job.sourceJobId;
-          if (rawId) {
-            knownMantikIds.add(rawId);
-            if (!mantikIdMap[rawId]) mantikIdMap[rawId] = now;
-          }
-        }
-        if (knownMantikIds.size > prevSize) {
-          scoreCache.mantikIds = mantikIdMap;
-          await kv.setValue('score_cache.json', scoreCache);
-          log.info(`[${source.id}] Saved ${knownMantikIds.size} Mantiks IDs to score_cache.json (+${knownMantikIds.size - prevSize} new)`);
-        }
-      }
 
       if (allJobs.length >= maxTotal) {
         log.info(`Reached maxTotalItems=${maxTotal}; stopping further source collection.`);
@@ -1237,11 +944,7 @@ Actor.main(async () => {
     if (!s.meta?.hitCap) continue;
     const type = s.type;
     let detail = '';
-    if (type === 'rapidapi_mantiks') {
-      detail = `searched ${s.meta.searchPagesFetched}/${s.meta.maxPages} pages — likely more older results exist`;
-    } else if (type === 'rapidapi_jsearch') {
-      detail = `returned ${s.meta.itemCount} of ${s.meta.totalAvailable} available — API paging limited`;
-    } else if (type === 'remotive') {
+    if (type === 'remotive') {
       detail = `returned ${s.meta.returnedCount} items (limit ${s.meta.limit}) — more may exist`;
     } else if (type === 'gracklehq') {
       detail = `departments hit page cap: ${(s.meta.deptsCapped || []).join(', ')}`;
