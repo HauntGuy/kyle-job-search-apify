@@ -87,13 +87,6 @@
       }
     },
     {
-      "id": "remotive",
-      "type": "remotive",
-      "enabled": true,
-      "query": "unity developer",
-      "limit": 200
-    },
-    {
       "id": "remoteok",
       "type": "remoteok",
       "enabled": false
