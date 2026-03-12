@@ -59,6 +59,7 @@ Actor.main(async () => {
   const scoredXlsx = await kv.getValue('scored.xlsx');
   const collectedXlsx = await kv.getValue('collected.xlsx');
   const scoringReport = await kv.getValue('scoring_report.json');
+  const pipelineReport = await kv.getValue('pipeline_report.json');
 
   const toEmail = String(notifyCfg.toEmail || '').trim();
   if (!toEmail) throw new Error('Missing config.notify.toEmail');
@@ -94,13 +95,23 @@ Actor.main(async () => {
     }
   } catch { /* collect_report may not exist */ }
 
+  // Pipeline duration from orchestrator report
+  let durationLine = '';
+  if (pipelineReport?.startedAt && pipelineReport?.finishedAt) {
+    const durMs = new Date(pipelineReport.finishedAt) - new Date(pipelineReport.startedAt);
+    const durMin = (durMs / 60000).toFixed(1);
+    const status = pipelineReport.status || 'unknown';
+    durationLine = `<b>Duration:</b> ${durMin} min | <b>Status:</b> ${status}`;
+  }
+
   const html = `
     <div style="font-family: Arial, sans-serif;">
       ${unscoredWarning}
       ${capWarningsHtml}
       <h2>Job Search Results</h2>
       <p><b>Accepted:</b> ${acceptedCount}<br/>
-         <b>Scored:</b> ${totalScored}</p>
+         <b>Scored:</b> ${totalScored}
+         ${durationLine ? `<br/>${durationLine}` : ''}</p>
       ${diagnosticsUrl ? `<p>Diagnostics: <a href="${diagnosticsUrl}">${diagnosticsUrl}</a></p>` : ''}
       <p>See attached spreadsheets: <code>accepted.xlsx</code> (top picks), <code>scored.xlsx</code> (all scored jobs), <code>collected.xlsx</code> (raw collected).</p>
       <hr/>
