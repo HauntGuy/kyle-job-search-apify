@@ -658,9 +658,9 @@ async function runBuiltIn(source) {
           if (/\d+\s+locations/i.test(locText)) {
             const tooltip = locSpan.attr('data-bs-title') || '';
             if (tooltip) {
-              // Parse tooltip HTML: "<div class='...'>Austin, TX</div><div>NYC, NY</div>"
-              const cities = tooltip.match(/>([^<]+)</g);
-              if (cities) locText = cities.map(c => c.slice(1).trim()).filter(Boolean).join('; ');
+              // Parse tooltip HTML: "<div class='text-truncate'>Austin, TX, USA</div>"
+              const cities = [...tooltip.matchAll(/>([^<]+)</g)].map(m => m[1].trim()).filter(Boolean);
+              if (cities.length) locText = cities.join('; ');
             }
           }
           location = locText;
