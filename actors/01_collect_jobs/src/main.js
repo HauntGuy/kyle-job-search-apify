@@ -862,16 +862,19 @@ async function runRapidApiMantiks(source, knownMantikIds) {
     'X-RapidAPI-Host': 'indeed12.p.rapidapi.com',
   };
 
-  // --- Search phase: discover jobs (sorted by date, newest first) ---
+  // --- Search phase: discover jobs ---
+  // If sort is configured (e.g. "date"), results come newest-first.
   // Stop early if 2 consecutive pages have ALL known job IDs (nothing new left).
   // A failed page stops pagination but keeps already-fetched pages (partial results).
+  const sortParam = source.sort || '';  // e.g. "date" — omit to use Indeed's default relevance sort
   const allHits = [];
   let searchPagesFetched = 0;
   let searchError = null;
   let consecutiveAllKnownPages = 0;
   let earlyStopPage = 0;
   for (let page = 1; page <= maxPages; page++) {
-    const params = new URLSearchParams({ query, page: String(page), locality, sort: 'date', fromage: '14' });
+    const params = new URLSearchParams({ query, page: String(page), locality, fromage: '14' });
+    if (sortParam) params.set('sort', sortParam);
     if (location) params.set('location', location);
     if (radius) params.set('radius', radius);
 

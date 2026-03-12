@@ -190,8 +190,21 @@ Actor.main(async () => {
 
   const kv = await Actor.openKeyValueStore(kvStoreName);
 
+  // Persistent run counter — auto-increments each pipeline run.
+  // Stored in KV store so it survives across sessions.
+  let runNumber = 1;
+  try {
+    const counter = await kv.getValue('run_number.json');
+    if (counter && typeof counter.next === 'number') {
+      runNumber = counter.next;
+    }
+  } catch { /* first run — start at 1 */ }
+  await kv.setValue('run_number.json', { next: runNumber + 1, lastRunAt: nowIso() });
+  log.info(`Pipeline run #${runNumber}`);
+
   const pipelineMeta = {
     runId,
+    runNumber,
     startedAt: nowIso(),
     kvStoreName,
     datasetPrefix,

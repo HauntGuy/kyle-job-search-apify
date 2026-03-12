@@ -140,7 +140,7 @@
     {
       "id": "mantiks_game_designer",
       "type": "rapidapi_mantiks",
-      "enabled": true,
+      "enabled": false,
       "requiredEnv": ["RAPIDAPI_KEY"],
       "query": "game designer",
       "locality": "us",
@@ -149,7 +149,7 @@
     {
       "id": "mantiks_game_developer",
       "type": "rapidapi_mantiks",
-      "enabled": true,
+      "enabled": false,
       "requiredEnv": ["RAPIDAPI_KEY"],
       "query": "game developer",
       "locality": "us",
@@ -158,7 +158,7 @@
     {
       "id": "mantiks_game_programmer",
       "type": "rapidapi_mantiks",
-      "enabled": true,
+      "enabled": false,
       "requiredEnv": ["RAPIDAPI_KEY"],
       "query": "game programmer",
       "locality": "us",
@@ -167,7 +167,7 @@
     {
       "id": "mantiks_ma_implementation",
       "type": "rapidapi_mantiks",
-      "enabled": true,
+      "enabled": false,
       "requiredEnv": ["RAPIDAPI_KEY"],
       "query": "implementation specialist",
       "location": "Boston, MA",
@@ -178,7 +178,7 @@
     {
       "id": "mantiks_ma_customer_success",
       "type": "rapidapi_mantiks",
-      "enabled": true,
+      "enabled": false,
       "requiredEnv": ["RAPIDAPI_KEY"],
       "query": "customer success",
       "location": "Boston, MA",
@@ -189,7 +189,7 @@
     {
       "id": "mantiks_ma_solutions_engineer",
       "type": "rapidapi_mantiks",
-      "enabled": true,
+      "enabled": false,
       "requiredEnv": ["RAPIDAPI_KEY"],
       "query": "solutions engineer",
       "location": "Boston, MA",
@@ -200,7 +200,7 @@
     {
       "id": "mantiks_ma_tech_support",
       "type": "rapidapi_mantiks",
-      "enabled": true,
+      "enabled": false,
       "requiredEnv": ["RAPIDAPI_KEY"],
       "query": "technical support engineer",
       "location": "Boston, MA",
@@ -211,7 +211,7 @@
     {
       "id": "mantiks_ma_sales_engineer",
       "type": "rapidapi_mantiks",
-      "enabled": true,
+      "enabled": false,
       "requiredEnv": ["RAPIDAPI_KEY"],
       "query": "sales engineer",
       "location": "Boston, MA",

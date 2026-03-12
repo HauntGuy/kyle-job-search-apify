@@ -128,7 +128,9 @@ Actor.main(async () => {
   }
 
   const ts = nowIso();
-  const runId = input.runId || data['run_meta.json']?.runId || '(unknown runId)';
+  const runMeta = data['run_meta.json'] || {};
+  const runId = input.runId || runMeta.runId || '(unknown runId)';
+  const runNumber = runMeta.runNumber || null;
 
   const collectReport = data['collect_report.json'] || {};
   const mergeReport = data['merge_report.json'] || {};
@@ -285,6 +287,8 @@ Actor.main(async () => {
     durationLine = `Duration: ${durMin} min | Status: ${pipelineStatus}`;
   }
 
+  const runTitle = runNumber ? `Run #${runNumber}` : `Run ${escHtml(runId)}`;
+
   const html = `<!doctype html>
 <html>
 <head>
@@ -297,6 +301,7 @@ Actor.main(async () => {
   </style>
 </head>
 <body>
+  <h1>${runTitle}</h1>
   <div class="ts">Updated: ${escHtml(ts)} | Run ID: ${escHtml(runId)}</div>
   ${durationLine ? `<div class="ts">${escHtml(durationLine)}</div>` : ''}
 
