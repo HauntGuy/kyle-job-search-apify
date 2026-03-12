@@ -1194,12 +1194,12 @@ Actor.main(async () => {
         const prevSize = knownMantikIds.size;
         const now = nowIso();
         for (const job of jobs) {
-          for (const sid of (job.sourceJobIds || [])) {
-            if (typeof sid === 'string' && sid.startsWith('M:')) {
-              const id = sid.slice(2);
-              knownMantikIds.add(id);
-              if (!mantikIdMap[id]) mantikIdMap[id] = now;
-            }
+          // In the collector, jobs have sourceJobId (singular, no prefix).
+          // The merger later converts to sourceJobIds (plural, with M: prefix).
+          const rawId = job.sourceJobId;
+          if (rawId) {
+            knownMantikIds.add(rawId);
+            if (!mantikIdMap[rawId]) mantikIdMap[rawId] = now;
           }
         }
         if (knownMantikIds.size > prevSize) {
