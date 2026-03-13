@@ -280,7 +280,7 @@ function truncate(s, maxChars) {
 
 // --------------- Score cache helpers ---------------
 
-const SCORING_FORMAT_VERSION = 'v1'; // bump when scored.xlsx columns change
+const SCORING_FORMAT_VERSION = 'v2'; // v2: separate workMode/location fields, location in LLM prompt
 
 function extractRubricVersion(rubricText) {
   const match = String(rubricText || '').match(/^#\s+Rubric:.*?\((v\d+)\)/i);
@@ -352,113 +352,57 @@ const COMMUTABLE_TOWNS = new Set([
 ]);
 
 /**
- * Determine location_ok from the structured location string.
- * Returns "yes", "no", or "unknown".
- *
- * Format examples:
- *   "Remote | Boston, Massachusetts, United States"
- *   "Boston, Massachusetts, United States; Cambridge, Massachusetts, United States"
- *   "" (blank)
+ * Determine if a job's location is acceptable, using pre-normalized fields.
+ * job.workMode: 'RemoteOK' | 'RemoteOnly' | 'Hybrid' | 'On-Site' | ''
+ * job.location: normalized geography (e.g., 'Boston MA', 'DEU', 'USA', '')
  */
-/**
- * Check if a location string contains a known foreign country name or code.
- * Handles comma-separated ("Boston, Massachusetts, United States"),
- * dash-separated ("Japan-Tokyo-Business Tower Japan"),
- * space-separated ("Brighton England United Kingdom"),
- * and trailing 2-letter ISO codes ("Stockholm 118 63 SE", "Jakarta id").
- */
-function containsForeignCountry(locationStr) {
-  const lower = locationStr.toLowerCase();
+function computeLocationOk(job) {
+  const wm = String(job.workMode || '');
+  const loc = String(job.location || '').trim();
 
-  // Skip if it mentions US-domestic indicators
-  const usDomestic = ['united states', 'united states of america'];
-  for (const us of usDomestic) {
-    if (lower.includes(us)) return false;
+  // RemoteOnly (anywhere) → always acceptable
+  if (wm === 'RemoteOnly') return 'yes';
+
+  // RemoteOK → acceptable if the location is US-based (even if not MA)
+  // Foreign RemoteOK is ambiguous — let LLM decide
+  if (wm === 'RemoteOK') {
+    if (isForeignIso3(loc)) return 'unknown'; // Remote + foreign → LLM decides
+    return 'yes'; // Remote + US city → fine
   }
 
-  // Tokenize on commas, dashes, pipes, semicolons, colons, and spaces
-  const tokens = lower.split(/[,\-|;:\s]+/).map(t => t.trim()).filter(Boolean);
-
-  // Check trailing 2-letter ISO code (e.g., "se", "fr", "id", "ca")
-  if (tokens.length >= 2) {
-    const lastToken = tokens[tokens.length - 1];
-    if (lastToken.length === 2 && ISO2_FOREIGN_CODES[lastToken]) {
-      return true;
-    }
-  }
-
-  // Check single tokens against COUNTRY_NAME_TO_CODE
-  for (const token of tokens) {
-    if (['us', 'usa'].includes(token)) return false; // domestic
-    if (COUNTRY_NAME_TO_CODE[token]) return true;
-  }
-
-  // Check multi-word country names (2-word and 3-word combos)
-  for (let i = 0; i < tokens.length - 1; i++) {
-    const twoWord = `${tokens[i]} ${tokens[i + 1]}`;
-    if (COUNTRY_NAME_TO_CODE[twoWord]) return true;
-    if (i < tokens.length - 2) {
-      const threeWord = `${twoWord} ${tokens[i + 2]}`;
-      if (COUNTRY_NAME_TO_CODE[threeWord]) return true;
-    }
-  }
-
-  // Check for standalone 3-letter ISO codes (e.g., "GBR", "JPN", "CAN")
-  for (const token of tokens) {
-    if (token.length === 3 && /^[a-z]{3}$/.test(token)) {
-      const upper = token.toUpperCase();
-      // Check if it's a known 3-letter country code (values in our maps)
-      const knownCodes = new Set(Object.values(COUNTRY_NAME_TO_CODE));
-      if (knownCodes.has(upper) && upper !== 'USA') return true;
-    }
-  }
-
-  return false;
-}
-
-function computeLocationOk(locationStr) {
-  const loc = String(locationStr || '').trim();
+  // No location at all → unknown
   if (!loc) return 'unknown';
 
-  const hasRemote = /\bremote\b/i.test(loc);
-  const hasForeign = containsForeignCountry(loc);
+  // Foreign country (ISO3 code like "DEU", "JPN") → not commutable
+  if (isForeignIso3(loc)) return 'no';
 
-  // Remote + foreign country (e.g., "Remote - Canada", "Remote | Jakarta ID")
-  // → ambiguous, let LLM decide
-  if (hasRemote && hasForeign) return 'unknown';
-
-  // Remote with no foreign country → OK
-  if (hasRemote) return 'yes';
-
-  // Foreign country detected, not remote → definitely not commutable
-  if (hasForeign) return 'no';
-
-  // Split on semicolons (multi-location listings) and pipes (Remote | City)
-  const parts = loc.split(/[;|]/).map(p => p.trim()).filter(Boolean);
-
-  for (const part of parts) {
-    const partLower = part.toLowerCase();
-    // Check if this part mentions Massachusetts
-    if (partLower.includes('massachusetts')) {
-      // Extract city name: "Boston, Massachusetts, United States" → "boston"
-      const city = partLower.split(',')[0].trim();
-      // State-level entry like "Massachusetts, United States" (no specific city) →
-      // job is available somewhere in MA, give benefit of the doubt
-      if (city === 'massachusetts') return 'yes';
+  // Check for MA location
+  if (/\bMA\b/.test(loc)) {
+    // Has a city before MA? Check if commutable
+    const match = loc.match(/^(.+?)\s+MA$/);
+    if (match) {
+      const city = match[1].toLowerCase().trim();
       if (COMMUTABLE_TOWNS.has(city)) return 'yes';
-      // Massachusetts but not in commutable list → keep checking other locations
+      return 'no'; // MA but not commutable
     }
+    return 'yes'; // bare "MA"
   }
 
-  // If any part mentioned Massachusetts but no commutable town was found,
-  // and there are non-MA locations too, it depends on whether MA is an option.
-  // If ALL locations are non-MA/non-remote → "no"
-  // If some are MA but not commutable → "no"
-  // If we couldn't parse anything meaningful → "unknown"
-  const hasAnyCity = parts.some(p => p.includes(','));
-  if (hasAnyCity) return 'no';
+  // "USA" (generic) → unknown, could be anywhere
+  if (loc === 'USA') return 'unknown';
 
+  // US state abbreviation (2 letters) that isn't MA → no
+  if (/^[A-Z]{2}$/.test(loc) && loc !== 'MA') return 'no';
+
+  // US city + non-MA state → no
+  if (/\s[A-Z]{2}$/.test(loc) && !loc.endsWith(' MA')) return 'no';
+
+  // Couldn't determine → unknown (LLM will decide)
   return 'unknown';
+}
+
+function isForeignIso3(loc) {
+  return loc.length === 3 && /^[A-Z]{3}$/.test(loc) && loc !== 'USA';
 }
 
 // --------------- XLSX helpers ---------------
@@ -505,8 +449,9 @@ function detectPositionType(job) {
 // --------------- Remote Status Enrichment ---------------
 
 function enrichRemoteStatus(job) {
-  const loc = String(job.location || '');
-  if (/\bremote\b/i.test(loc)) return; // already tagged
+  const wm = String(job.workMode || '');
+  // Already has a remote-related work mode from collector normalization
+  if (wm === 'RemoteOK' || wm === 'RemoteOnly') return;
 
   let isRemote = false;
 
@@ -525,7 +470,14 @@ function enrichRemoteStatus(job) {
   }
 
   if (isRemote) {
-    job.location = loc ? `Remote | ${loc}` : 'Remote';
+    const loc = String(job.location || '');
+    // Determine RemoteOK vs RemoteOnly based on whether there's a city
+    if (!loc || loc === 'USA' || (/^[A-Z]{2}$/.test(loc) && loc.length === 2) ||
+        (loc.length === 3 && /^[A-Z]{3}$/.test(loc) && loc !== 'USA')) {
+      job.workMode = 'RemoteOnly';
+    } else {
+      job.workMode = 'RemoteOK';
+    }
   }
 }
 
@@ -602,148 +554,20 @@ async function fetchBuiltInDescription(url) {
 
 // --------------- Location Formatting ---------------
 
-const US_STATE_ABBREVS = {
-  'alabama': 'AL', 'alaska': 'AK', 'arizona': 'AZ', 'arkansas': 'AR',
-  'california': 'CA', 'colorado': 'CO', 'connecticut': 'CT', 'delaware': 'DE',
-  'florida': 'FL', 'georgia': 'GA', 'hawaii': 'HI', 'idaho': 'ID',
-  'illinois': 'IL', 'indiana': 'IN', 'iowa': 'IA', 'kansas': 'KS',
-  'kentucky': 'KY', 'louisiana': 'LA', 'maine': 'ME', 'maryland': 'MD',
-  'massachusetts': 'MA', 'michigan': 'MI', 'minnesota': 'MN', 'mississippi': 'MS',
-  'missouri': 'MO', 'montana': 'MT', 'nebraska': 'NE', 'nevada': 'NV',
-  'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY',
-  'north carolina': 'NC', 'north dakota': 'ND', 'ohio': 'OH', 'oklahoma': 'OK',
-  'oregon': 'OR', 'pennsylvania': 'PA', 'rhode island': 'RI', 'south carolina': 'SC',
-  'south dakota': 'SD', 'tennessee': 'TN', 'texas': 'TX', 'utah': 'UT',
-  'vermont': 'VT', 'virginia': 'VA', 'washington': 'WA', 'west virginia': 'WV',
-  'wisconsin': 'WI', 'wyoming': 'WY', 'district of columbia': 'DC',
-};
-const STATE_ABBREV_SET = new Set(Object.values(US_STATE_ABBREVS));
-
-// Common country names → ISO 3166-1 alpha-3 codes
-const COUNTRY_NAME_TO_CODE = {
-  'afghanistan': 'AFG', 'argentina': 'ARG', 'australia': 'AUS', 'austria': 'AUT',
-  'bangladesh': 'BGD', 'belgium': 'BEL', 'brazil': 'BRA', 'bulgaria': 'BGR',
-  'canada': 'CAN', 'chile': 'CHL', 'china': 'CHN', 'colombia': 'COL',
-  'costa rica': 'CRI', 'croatia': 'HRV', 'czech republic': 'CZE', 'czechia': 'CZE',
-  'denmark': 'DNK', 'dominican republic': 'DOM', 'ecuador': 'ECU', 'egypt': 'EGY',
-  'estonia': 'EST', 'finland': 'FIN', 'france': 'FRA', 'germany': 'DEU',
-  'greece': 'GRC', 'hungary': 'HUN', 'iceland': 'ISL', 'india': 'IND',
-  'indonesia': 'IDN', 'iran': 'IRN', 'iraq': 'IRQ', 'ireland': 'IRL',
-  'israel': 'ISR', 'italy': 'ITA', 'japan': 'JPN', 'jordan': 'JOR',
-  'kenya': 'KEN', 'latvia': 'LVA', 'lithuania': 'LTU', 'luxembourg': 'LUX',
-  'malaysia': 'MYS', 'mexico': 'MEX', 'méxico': 'MEX', 'morocco': 'MAR',
-  'netherlands': 'NLD', 'new zealand': 'NZL', 'nigeria': 'NGA', 'norway': 'NOR',
-  'pakistan': 'PAK', 'panama': 'PAN', 'peru': 'PER', 'philippines': 'PHL',
-  'poland': 'POL', 'portugal': 'PRT', 'romania': 'ROU', 'russia': 'RUS',
-  'saudi arabia': 'SAU', 'serbia': 'SRB', 'singapore': 'SGP', 'slovakia': 'SVK',
-  'slovenia': 'SVN', 'south africa': 'ZAF', 'south korea': 'KOR', 'spain': 'ESP',
-  'sweden': 'SWE', 'switzerland': 'CHE', 'taiwan': 'TWN', 'thailand': 'THA',
-  'turkey': 'TUR', 'türkiye': 'TUR', 'ukraine': 'UKR',
-  'united arab emirates': 'ARE', 'uae': 'ARE',
-  'united kingdom': 'GBR', 'uk': 'GBR', 'england': 'GBR', 'scotland': 'GBR', 'wales': 'GBR',
-  'uruguay': 'URY', 'venezuela': 'VEN', 'vietnam': 'VNM',
-  'british columbia': 'CAN',  // province, not a country, but foreign to Kyle
-};
-
-// ISO 3166-1 alpha-2 codes → alpha-3 (foreign only; US/MA excluded)
-// Used to detect trailing 2-letter country codes in GameJobs.co locations
-// e.g. "Stockholm 118 63 SE" → se → SWE
-const ISO2_FOREIGN_CODES = {
-  'ar': 'ARG', 'at': 'AUT', 'au': 'AUS', 'be': 'BEL', 'br': 'BRA',
-  'by': 'BLR', 'ca': 'CAN', 'ch': 'CHE', 'cn': 'CHN', 'co': 'COL',
-  'cz': 'CZE', 'de': 'DEU', 'dk': 'DNK', 'ee': 'EST', 'es': 'ESP',
-  'fi': 'FIN', 'fr': 'FRA', 'gb': 'GBR', 'gr': 'GRC', 'hu': 'HUN',
-  'id': 'IDN', 'ie': 'IRL', 'il': 'ISR', 'in': 'IND', 'it': 'ITA',
-  'jp': 'JPN', 'kr': 'KOR', 'lt': 'LTU', 'lv': 'LVA', 'mx': 'MEX',
-  'nl': 'NLD', 'no': 'NOR', 'nz': 'NZL', 'ph': 'PHL', 'pk': 'PAK',
-  'pl': 'POL', 'pt': 'PRT', 'ro': 'ROU', 'ru': 'RUS', 'se': 'SWE',
-  'sg': 'SGP', 'sk': 'SVK', 'th': 'THA', 'tr': 'TUR', 'tw': 'TWN',
-  'ua': 'UKR', 'uk': 'GBR', 'vn': 'VNM', 'za': 'ZAF',
-};
-
-const MA_INDICATORS = ['massachusetts', ' ma', 'boston', 'lexington', 'cambridge',
-  'waltham', 'woburn', 'burlington', 'bedford', 'concord', 'framingham'];
-
-/** Format a single location part (no pipes). */
-function formatLocationPart(part) {
-  const trimmed = part.trim();
-  if (!trimmed) return '';
-
-  const segments = trimmed.split(',').map(s => s.trim()).filter(Boolean);
-  if (segments.length === 0) return trimmed;
-
-  let city = '';
-  let stateAbbrev = '';
-  let hasUS = false;
-
-  for (const seg of segments) {
-    const lower = seg.toLowerCase();
-    if (['united states', 'usa', 'us', 'united states of america'].includes(lower)) {
-      hasUS = true;
-      continue;
-    }
-    if (US_STATE_ABBREVS[lower]) {
-      stateAbbrev = US_STATE_ABBREVS[lower];
-      continue;
-    }
-    if (seg.length === 2 && STATE_ABBREV_SET.has(seg.toUpperCase())) {
-      stateAbbrev = seg.toUpperCase();
-      continue;
-    }
-    if (!city) city = seg;
-  }
-
-  if (stateAbbrev) return city ? `${city} ${stateAbbrev}` : stateAbbrev;
-  if (hasUS) return city || 'USA';
-
-  // Foreign: if last segment is a 2-3 letter country code, show only that
-  const last = segments[segments.length - 1];
-  if (/^[A-Z]{2,3}$/.test(last) && segments.length >= 2) return last;
-
-  // Foreign: if last segment is a known country name, convert to ISO 3-letter code
-  const lastLower = last.toLowerCase();
-  const countryCode = COUNTRY_NAME_TO_CODE[lastLower];
-  if (countryCode && segments.length >= 2) return countryCode;
-  // Standalone country name (no city)
-  if (countryCode && segments.length === 1) return countryCode;
-
-  // Fallback: rejoin without commas
-  return segments.join(' ');
-}
-
-/** Format location for XLSX display. Handles pipes and semicolons. */
-function formatLocation(location) {
-  const loc = String(location || '').trim();
-  if (!loc) return '';
-
-  const pipeParts = loc.split('|').map(s => s.trim()).filter(Boolean);
-  const prefixes = [];
-  const locationParts = [];
-
-  for (const pp of pipeParts) {
-    if (/^(remote|hybrid)$/i.test(pp)) {
-      prefixes.push(pp.charAt(0).toUpperCase() + pp.slice(1).toLowerCase());
-    } else {
-      locationParts.push(...pp.split(';').map(s => s.trim()).filter(Boolean));
-    }
-  }
-
-  if (locationParts.length === 0) return prefixes.join(' | ') || loc;
-
-  // Multi-location: prefer MA-relevant
-  let chosen;
-  if (locationParts.length > 1) {
-    const maMatch = locationParts.find(p => {
-      const lower = ` ${p.toLowerCase()} `;
-      return MA_INDICATORS.some(ind => lower.includes(ind));
-    });
-    chosen = maMatch || locationParts[0];
-  } else {
-    chosen = locationParts[0];
-  }
-
-  const formatted = formatLocationPart(chosen);
-  return prefixes.length ? `${prefixes.join(' | ')} | ${formatted}` : formatted;
+/**
+ * Format location for XLSX display.
+ * With pre-normalized fields, this is now trivial — location is already clean.
+ * For accepted.xlsx: combines workMode + location into a single "Where" string.
+ * For scored.xlsx: location is shown as-is (workMode is a separate column).
+ */
+function formatLocationForDisplay(job, combineWorkMode = false) {
+  const loc = String(job.location || '').trim();
+  if (!combineWorkMode) return loc;
+  // Combine for accepted.xlsx "Where" column
+  const wm = String(job.workMode || '');
+  if (!wm) return loc;
+  if (!loc) return wm;
+  return `${wm} | ${loc}`;
 }
 
 function extractRootDomainUrl(urlStr) {
@@ -1007,9 +831,14 @@ async function buildScoredXlsx(jobs, {
     { header: 'Company',       width: 26, key: 'company' },
     { header: 'Job Title',     width: 46, key: 'title' },
     { header: 'Salary',        width: 26, key: 'salary' },
-    { header: 'Where',         width: 36, key: 'where' },
-    { header: 'Position Type', width: 14, key: 'positionType' },
   ];
+  if (isAcceptedSheet) {
+    colDefs.push({ header: 'Where', width: 36, key: 'where' }); // combined workMode + location
+  } else {
+    colDefs.push({ header: 'Location',  width: 30, key: 'location' });
+    colDefs.push({ header: 'Work Mode', width: 12, key: 'workMode' });
+  }
+  colDefs.push({ header: 'Position Type', width: 14, key: 'positionType' });
   if (!isAcceptedSheet) {
     colDefs.push({ header: 'Score', width: 8, key: 'score' });
     colDefs.push({ header: 'Role',  width: 22, key: 'role' });
@@ -1075,7 +904,6 @@ async function buildScoredXlsx(jobs, {
     const roleStr = Array.isArray(ev.role) ? ev.role.join(', ') : (ev.role || '');
 
     const salary = formatSalary(j.salary || ev.salary_extracted || '');
-    const where = formatLocation(j.location);
     const score = ev.score ?? 0;
     const ageDays = calculateAgeDays(j.earliestPostedAt || j.postedAt);
     const sourcesArr = Array.isArray(j.sources) ? j.sources : [j.source].filter(Boolean);
@@ -1087,7 +915,9 @@ async function buildScoredXlsx(jobs, {
       company:      j.company || '',
       title:        j.title || '',
       salary,
-      where,
+      where:        formatLocationForDisplay(j, true),   // combined for accepted.xlsx
+      location:     j.location || '',                     // separate for scored.xlsx
+      workMode:     j.workMode || '',                     // separate for scored.xlsx
       positionType,
       score,
       role:         roleStr,
@@ -1250,7 +1080,7 @@ Actor.main(async () => {
   let locationSkipped = 0;
   const preLocationMap = new Map(); // idx → location_ok
   for (let i = 0; i < mergedJobs.length; i++) {
-    preLocationMap.set(i, computeLocationOk(mergedJobs[i].location));
+    preLocationMap.set(i, computeLocationOk(mergedJobs[i]));
   }
   const noLocationCount = [...preLocationMap.values()].filter(v => v === 'no').length;
   log.info(`Location pre-filter: ${noLocationCount} jobs are location_ok=no and will be skipped (not sent to LLM).`);
@@ -1408,7 +1238,7 @@ Actor.main(async () => {
           accepted: false,
           score: 0,
           confidence: 1.0,
-          location_ok: preLocationMap.get(idx) || computeLocationOk(job.location),
+          location_ok: preLocationMap.get(idx) || computeLocationOk(job),
           reason_short: titleDqReason,
           reasons: [titleDqReason],
           red_flags: ['Title disqualified (pre-filter).'],
@@ -1422,7 +1252,7 @@ Actor.main(async () => {
     }
 
     // 2) Location gate — deterministic reject, overrides cache
-    const locationOk = preLocationMap.get(idx) || computeLocationOk(job.location);
+    const locationOk = preLocationMap.get(idx) || computeLocationOk(job);
     if (locationOk === 'no') {
       locationSkipped += 1;
       return {
@@ -1482,10 +1312,11 @@ Actor.main(async () => {
 
     // --- LLM scoring (cache miss, all gates passed) ---
 
-    // For location_ok = "yes" or "unknown", send to LLM without location info
     const jobForPrompt = {
       title: job.title || '',
       company: job.company || '',
+      location: job.location || '',
+      workMode: job.workMode || '',
       url: job.url || '',
       applyUrl: job.applyUrl || '',
       sources: job.sources || [job.source].filter(Boolean),
@@ -1501,7 +1332,9 @@ Actor.main(async () => {
         content:
           rubricText +
           '\n\n' +
-          'Return ONLY valid JSON, no markdown. Ensure fields: accept, score, confidence, reason_short, reasons, red_flags, tags, salary_extracted, company_url, role.',
+          'Return ONLY valid JSON, no markdown. Ensure fields: accept, score, confidence, reason_short, reasons, red_flags, tags, salary_extracted, company_url, role, location, work_mode.\n' +
+          'location: Your best determination of the job\'s geographic location (e.g., "Boston MA", "JPN", "USA"). Use the provided location as a starting point, but refine based on the description.\n' +
+          'work_mode: One of "RemoteOK", "RemoteOnly", "Hybrid", "On-Site", or "". Refine based on the description.',
       },
       {
         role: 'user',
@@ -1514,6 +1347,16 @@ Actor.main(async () => {
 
     const score = toInt(evaluation.score ?? evaluation.Score ?? 0, 0);
     const accept = !!(evaluation.accept ?? evaluation.Accept);
+
+    // Enhance location/workMode from LLM response if provided
+    const llmLocation = evaluation.location;
+    const llmWorkMode = evaluation.work_mode;
+    if (llmLocation && typeof llmLocation === 'string' && llmLocation.trim()) {
+      job.location = llmLocation.trim();
+    }
+    if (llmWorkMode && typeof llmWorkMode === 'string' && llmWorkMode.trim()) {
+      job.workMode = llmWorkMode.trim();
+    }
 
     const accepted =
       accept &&
@@ -1556,7 +1399,7 @@ Actor.main(async () => {
   const results = [...rawResults];
   for (const { index, error } of scoringFailures) {
     const job = mergedJobs[index];
-    const locationOk = preLocationMap.get(index) || computeLocationOk(job.location);
+    const locationOk = preLocationMap.get(index) || computeLocationOk(job);
     openAiStats.hardFailures += 1;
     log.error(`Scoring failed for idx=${index} title="${job.title}": ${error?.message || error}`);
     results[index] = {

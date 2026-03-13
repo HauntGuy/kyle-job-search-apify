@@ -107,6 +107,285 @@ function canonicalizeUrl(u) {
   }
 }
 
+// --------------- Location Normalization ---------------
+// Splits raw location strings into separate (workMode, location) fields.
+// workMode: 'RemoteOK' | 'RemoteOnly' | 'Hybrid' | 'On-Site' | ''
+// location: normalized geography (e.g., 'Boston MA', 'DEU', 'USA', '')
+
+const STATE_NAME_TO_ABBREV = {
+  'alabama':'AL','alaska':'AK','arizona':'AZ','arkansas':'AR',
+  'california':'CA','colorado':'CO','connecticut':'CT','delaware':'DE',
+  'florida':'FL','georgia':'GA','hawaii':'HI','idaho':'ID',
+  'illinois':'IL','indiana':'IN','iowa':'IA','kansas':'KS',
+  'kentucky':'KY','louisiana':'LA','maine':'ME','maryland':'MD',
+  'massachusetts':'MA','michigan':'MI','minnesota':'MN',
+  'mississippi':'MS','missouri':'MO','montana':'MT','nebraska':'NE',
+  'nevada':'NV','new hampshire':'NH','new jersey':'NJ',
+  'new mexico':'NM','new york':'NY','north carolina':'NC',
+  'north dakota':'ND','ohio':'OH','oklahoma':'OK','oregon':'OR',
+  'pennsylvania':'PA','rhode island':'RI','south carolina':'SC',
+  'south dakota':'SD','tennessee':'TN','texas':'TX','utah':'UT',
+  'vermont':'VT','virginia':'VA','washington':'WA',
+  'west virginia':'WV','wisconsin':'WI','wyoming':'WY',
+  'district of columbia':'DC',
+};
+
+const US_STATE_ABBREVS = new Set(Object.values(STATE_NAME_TO_ABBREV));
+US_STATE_ABBREVS.add('DC');
+
+const COUNTRY_NAME_TO_CODE_LOC = {
+  'afghanistan':'AFG','albania':'ALB','algeria':'DZA','argentina':'ARG',
+  'armenia':'ARM','australia':'AUS','austria':'AUT','azerbaijan':'AZE',
+  'bahrain':'BHR','bangladesh':'BGD','belarus':'BLR','belgium':'BEL',
+  'bolivia':'BOL','bosnia':'BIH','brazil':'BRA','brunei':'BRN',
+  'bulgaria':'BGR','cambodia':'KHM','cameroon':'CMR','canada':'CAN',
+  'chile':'CHL','china':'CHN','colombia':'COL','costa rica':'CRI',
+  'croatia':'HRV','cuba':'CUB','cyprus':'CYP','czech republic':'CZE',
+  'czechia':'CZE','denmark':'DNK','dominican republic':'DOM','ecuador':'ECU',
+  'egypt':'EGY','el salvador':'SLV','england':'GBR','estonia':'EST',
+  'ethiopia':'ETH','finland':'FIN','france':'FRA',
+  'germany':'DEU','ghana':'GHA','greece':'GRC','guatemala':'GTM',
+  'honduras':'HND','hong kong':'HKG','hungary':'HUN','iceland':'ISL',
+  'india':'IND','indonesia':'IDN','iran':'IRN','iraq':'IRQ','ireland':'IRL',
+  'israel':'ISR','italy':'ITA','ivory coast':'CIV','jamaica':'JAM',
+  'japan':'JPN','jordan':'JOR','kazakhstan':'KAZ','kenya':'KEN',
+  'kuwait':'KWT','kyrgyzstan':'KGZ','laos':'LAO','latvia':'LVA',
+  'lebanon':'LBN','libya':'LBY','liechtenstein':'LIE','lithuania':'LTU',
+  'luxembourg':'LUX','macedonia':'MKD','malaysia':'MYS','maldives':'MDV',
+  'malta':'MLT','mauritius':'MUS','mexico':'MEX','moldova':'MDA',
+  'monaco':'MCO','mongolia':'MNG','montenegro':'MNE','morocco':'MAR',
+  'mozambique':'MOZ','myanmar':'MMR','namibia':'NAM','nepal':'NPL',
+  'netherlands':'NLD','new zealand':'NZL','nicaragua':'NIC','nigeria':'NGA',
+  'north korea':'PRK','norway':'NOR','oman':'OMN','pakistan':'PAK',
+  'palestine':'PSE','panama':'PAN','paraguay':'PRY','peru':'PER',
+  'philippines':'PHL','poland':'POL','portugal':'PRT','qatar':'QAT',
+  'romania':'ROU','russia':'RUS','rwanda':'RWA','saudi arabia':'SAU',
+  'scotland':'GBR','senegal':'SEN','serbia':'SRB','singapore':'SGP',
+  'slovakia':'SVK','slovenia':'SVN','south africa':'ZAF','south korea':'KOR',
+  'spain':'ESP','sri lanka':'LKA','sudan':'SDN','sweden':'SWE',
+  'switzerland':'CHE','syria':'SYR','taiwan':'TWN','tajikistan':'TJK',
+  'tanzania':'TZA','thailand':'THA','trinidad':'TTO','tunisia':'TUN',
+  'turkey':'TUR','turkmenistan':'TKM','uganda':'UGA','ukraine':'UKR',
+  'united arab emirates':'ARE','united kingdom':'GBR','uruguay':'URY',
+  'uzbekistan':'UZB','venezuela':'VEN','vietnam':'VNM','wales':'GBR',
+  'yemen':'YEM','zambia':'ZMB','zimbabwe':'ZWE',
+};
+
+const ISO3_FOREIGN_CODES = new Set(Object.values(COUNTRY_NAME_TO_CODE_LOC));
+ISO3_FOREIGN_CODES.delete('USA');
+
+const ISO2_FOREIGN_CODES = {
+  'ar':'ARG','at':'AUT','au':'AUS','be':'BEL','br':'BRA',
+  'by':'BLR','ca':'CAN','ch':'CHE','cn':'CHN','co':'COL',
+  'cz':'CZE','de':'DEU','dk':'DNK','ee':'EST','es':'ESP',
+  'fi':'FIN','fr':'FRA','gb':'GBR','gr':'GRC','hu':'HUN',
+  'id':'IDN','ie':'IRL','il':'ISR','in':'IND','it':'ITA',
+  'jp':'JPN','kr':'KOR','lt':'LTU','lv':'LVA','mx':'MEX',
+  'nl':'NLD','no':'NOR','nz':'NZL','ph':'PHL','pk':'PAK',
+  'pl':'POL','pt':'PRT','ro':'ROU','ru':'RUS','se':'SWE',
+  'sg':'SGP','sk':'SVK','th':'THA','tr':'TUR','tw':'TWN',
+  'ua':'UKR','uk':'GBR','vn':'VNM','za':'ZAF',
+};
+
+const US_DOMESTIC = new Set(['united states', 'us', 'usa', 'united states of america']);
+
+function _detectWorkModeRaw(raw) {
+  const low = raw.toLowerCase();
+  if (/\bremote\b/.test(low)) return 'remote';
+  if (/\bhybrid\b/.test(low)) return 'hybrid';
+  if (/\b(on[- ]?site|in[- ]?office|in[- ]?person|onsite)\b/.test(low)) return 'onsite';
+  return '';
+}
+
+function _refineRemote(geo) {
+  if (!geo) return 'RemoteOnly';
+  if (geo === 'USA') return 'RemoteOnly';
+  if (geo.length === 2 && US_STATE_ABBREVS.has(geo.toUpperCase())) return 'RemoteOnly';
+  if (geo.length === 3 && /^[A-Z]{3}$/.test(geo) && geo !== 'USA') return 'RemoteOnly';
+  return 'RemoteOK';
+}
+
+function _stripWorkMode(raw) {
+  let s = raw;
+  // "In-Office or Remote | ..." compound prefix
+  s = s.replace(/^(in[- ]?office\s+or\s+remote|remote\s+or\s+hybrid|remote\s+or\s+in[- ]?office)\s*[|/,\-:]\s*/i, '');
+  // Simple work mode prefix
+  s = s.replace(/^(remote|hybrid|on[- ]?site|in[- ]?office|in[- ]?person|onsite)\s*[|/,\-:]\s*/i, '');
+  // Trailing "(Remote)", "(Onsite)", etc.
+  s = s.replace(/\s*\((remote|hybrid|on[- ]?site|in[- ]?office|in[- ]?person|onsite)\)\s*/ig, '');
+  // Standalone work mode words
+  s = s.replace(/\b(remote|hybrid|on[- ]?site|in[- ]?office|in[- ]?person|onsite)\b/ig, '');
+  // "Office" suffix (e.g., "Warsaw Office" -> "Warsaw")
+  s = s.replace(/\s+[Oo]ffice\s*$/, '');
+  // Clean up leftover delimiters
+  s = s.replace(/\s*[|/,\-:]\s*$/, '').replace(/^\s*[|/,\-:]\s*/, '');
+  return s.trim();
+}
+
+function _findStateInText(text) {
+  const low = text.toLowerCase().trim();
+  // Multi-word state names first
+  const multiWord = Object.keys(STATE_NAME_TO_ABBREV).filter(n => n.includes(' ')).sort((a, b) => b.length - a.length);
+  for (const name of multiWord) {
+    if (low.includes(name)) return STATE_NAME_TO_ABBREV[name];
+  }
+  // Single-word state names
+  const words = low.split(/[,\s]+/).filter(Boolean);
+  for (const w of words) {
+    if (w in STATE_NAME_TO_ABBREV) {
+      if (w === 'georgia' && !low.includes('united states')) continue; // ambiguous
+      return STATE_NAME_TO_ABBREV[w];
+    }
+  }
+  // 2-letter uppercase abbreviations
+  const tokens = text.trim().split(/[,\s]+/).filter(Boolean);
+  for (const t of tokens) {
+    if (t.length === 2 && t === t.toUpperCase() && US_STATE_ABBREVS.has(t)) return t;
+  }
+  return null;
+}
+
+function _findForeignCountry(text) {
+  const low = text.toLowerCase().trim();
+  // Multi-word country names (longest match)
+  const multiWord = Object.keys(COUNTRY_NAME_TO_CODE_LOC).filter(n => n.includes(' ')).sort((a, b) => b.length - a.length);
+  for (const name of multiWord) {
+    if (US_DOMESTIC.has(name)) continue;
+    if (low.includes(name)) return COUNTRY_NAME_TO_CODE_LOC[name];
+  }
+  // Single-word country names
+  const words = low.split(/[,\s\-|;:]+/).filter(Boolean);
+  for (const w of words) {
+    if (w in COUNTRY_NAME_TO_CODE_LOC && !US_DOMESTIC.has(w)) {
+      if (w === 'georgia') continue;
+      return COUNTRY_NAME_TO_CODE_LOC[w];
+    }
+  }
+  // 3-letter ISO codes
+  const tokens = text.trim().split(/[,\s\-|;:]+/).filter(Boolean);
+  for (const t of tokens) {
+    if (t.length === 3 && ISO3_FOREIGN_CODES.has(t.toUpperCase())) return t.toUpperCase();
+  }
+  // Trailing 2-letter ISO code
+  if (tokens.length > 0) {
+    const last = tokens[tokens.length - 1].toLowerCase();
+    if (last.length === 2 && last in ISO2_FOREIGN_CODES) return ISO2_FOREIGN_CODES[last];
+  }
+  return null;
+}
+
+function _normalizeCommaLocation(geo) {
+  const segments = geo.split(',').map(s => s.trim()).filter(Boolean);
+  if (!segments.length) return '';
+  const last = segments[segments.length - 1];
+  const lastLow = last.toLowerCase();
+  // 3-letter ISO foreign code (Built In format: "Berlin, DEU")
+  if (last.length === 3 && ISO3_FOREIGN_CODES.has(last.toUpperCase())) return last.toUpperCase();
+  // Foreign country name
+  if (lastLow in COUNTRY_NAME_TO_CODE_LOC && !US_DOMESTIC.has(lastLow)) return COUNTRY_NAME_TO_CODE_LOC[lastLow];
+  // US domestic
+  if (US_DOMESTIC.has(lastLow) || lastLow === 'united states of america') {
+    const parts = segments.slice(0, -1);
+    if (!parts.length) return 'USA';
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const st = _findStateInText(parts[i]);
+      if (st) {
+        const city = parts.slice(0, i).map(s => s.trim());
+        return city.length ? `${city[0].split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')} ${st}` : st;
+      }
+    }
+    return parts[0].split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+  }
+  // Check for state abbreviation in segments
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const st = _findStateInText(segments[i]);
+    if (st) {
+      const city = segments.slice(0, i).map(s => s.trim());
+      if (city.length) {
+        const titleCity = city[0].split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+        return `${titleCity} ${st}`;
+      }
+      return st;
+    }
+  }
+  // Check full text for foreign country
+  const foreign = _findForeignCountry(geo);
+  if (foreign) return foreign;
+  // Fallback
+  return segments.map(s => s.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')).join(', ');
+}
+
+function _normalizeNonCommaLocation(geo) {
+  if (!geo.trim()) return '';
+  // Foreign country
+  const foreign = _findForeignCountry(geo);
+  if (foreign) return foreign;
+  // US state
+  const state = _findStateInText(geo);
+  if (state) {
+    let clean = geo.replace(/\b(united states of america|united states|usa|us)\b/ig, '');
+    clean = clean.replace(/\b\d{5}(-\d{4})?\b/g, ''); // zip codes
+    const tokens = clean.split(/[\-|;:\s]+/).filter(t => t && t.toUpperCase() !== state
+      && !(t.toLowerCase() in STATE_NAME_TO_ABBREV) && t.length > 1);
+    const cityTokens = tokens.filter(t => !(/^\d+$/.test(t)) && !(t.length === 2 && US_STATE_ABBREVS.has(t.toUpperCase())));
+    if (cityTokens.length) {
+      const city = cityTokens.slice(0, 3).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+      return `${city} ${state}`;
+    }
+    return state;
+  }
+  // "United States" without state
+  if (US_DOMESTIC.has(geo.toLowerCase().trim())) return 'USA';
+  if (/\bunited states\b/i.test(geo)) return 'USA';
+  // Unknown
+  return geo.trim().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+}
+
+/**
+ * Normalize a raw location string into { workMode, location }.
+ * workMode: 'RemoteOK' | 'RemoteOnly' | 'Hybrid' | 'On-Site' | ''
+ * location: normalized geography string
+ */
+function normalizeLocationFields(rawLocation) {
+  if (!rawLocation || typeof rawLocation !== 'string' || !rawLocation.trim()) {
+    return { workMode: '', location: '' };
+  }
+  const raw = rawLocation.trim();
+  const rawWm = _detectWorkModeRaw(raw);
+  let geo = _stripWorkMode(raw);
+  if (!geo) {
+    if (rawWm === 'remote') return { workMode: 'RemoteOnly', location: '' };
+    if (rawWm === 'hybrid') return { workMode: 'Hybrid', location: '' };
+    if (rawWm === 'onsite') return { workMode: 'On-Site', location: '' };
+    return { workMode: '', location: '' };
+  }
+  // Multi-location: pick first
+  if (geo.includes(';')) {
+    const parts = geo.split(';').map(s => s.trim()).filter(Boolean);
+    if (parts.length > 1) geo = parts[0];
+  }
+  // Route to handler
+  let location;
+  if (geo.includes(',')) {
+    location = _normalizeCommaLocation(geo);
+  } else {
+    location = _normalizeNonCommaLocation(geo);
+  }
+  // Normalize US variants
+  const locLow = location.toLowerCase();
+  if (locLow === 'united states' || locLow === 'us' || locLow === 'usa' || locLow === 'united states of america') {
+    location = 'USA';
+  }
+  // Refine work mode
+  let workMode = '';
+  if (rawWm === 'remote') workMode = _refineRemote(location);
+  else if (rawWm === 'hybrid') workMode = 'Hybrid';
+  else if (rawWm === 'onsite') workMode = 'On-Site';
+  return { workMode, location };
+}
+
+// --------------- Source Normalizers ---------------
+
 function normalizeGeneric(sourceId, raw) {
   const title = firstString(raw.title, raw.job_title, raw.position, raw.role, raw.jobTitle);
   const company = firstString(raw.organization, raw.company, raw.companyName, raw.employer_name, raw.employerName, raw.company_name);
@@ -1234,7 +1513,8 @@ async function buildCollectedXlsx(jobs) {
     { header: 'Source',        width: 14 },
     { header: 'Company',       width: 26 },
     { header: 'Job Title',     width: 46 },
-    { header: 'Location',      width: 36 },
+    { header: 'Location',      width: 30 },
+    { header: 'Work Mode',     width: 12 },
     { header: 'Position Type', width: 14 },
     { header: 'Salary',        width: 22 },
     { header: 'Posted At',     width: 22 },
@@ -1256,6 +1536,7 @@ async function buildCollectedXlsx(jobs) {
       j.company || '',
       j.title || '',            // will become hyperlink
       j.location || '',
+      j.workMode || '',
       j.employmentType || '',
       j.salary || '',
       j.postedAt || '',
@@ -1329,6 +1610,10 @@ Actor.main(async () => {
       const searchTerms = source.input?.titleSearch || [];
       for (const job of trimmed) {
         job.searchTerms = searchTerms;
+        // Normalize location into separate workMode + location fields
+        const { workMode, location } = normalizeLocationFields(job.location);
+        job.workMode = workMode;
+        job.location = location;
       }
 
       allJobs.push(...trimmed);
