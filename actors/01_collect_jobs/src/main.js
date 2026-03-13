@@ -3,6 +3,7 @@
 
 import { Actor, log } from 'apify';
 import ExcelJS from 'exceljs';
+import { gotScraping } from 'got-scraping';
 import { withRetries, processWithRetries, fetchJsonRetryable } from './resilient-fetch.js';
 import { load as cheerioLoad } from 'cheerio';
 
@@ -870,6 +871,33 @@ async function runGameJobsCo(source, kv) {
   const detailDelayMs = source.detailDelayMs || 6000;
   const fetchDetails = source.fetchDetails !== false;
 
+  // Use Apify residential proxy to bypass Cloudflare
+  let proxyConfig = null;
+  try {
+    proxyConfig = await Actor.createProxyConfiguration({ groups: ['RESIDENTIAL'] });
+    log.info(`[${source.id}] Residential proxy enabled.`);
+  } catch (err) {
+    log.warning(`[${source.id}] Could not create residential proxy: ${err?.message || err}. Falling back to direct.`);
+  }
+
+  async function fetchWithProxy(url) {
+    const opts = {
+      url,
+      responseType: 'text',
+      timeout: { request: 30000 },
+    };
+    if (proxyConfig) {
+      opts.proxyUrl = await proxyConfig.newUrl();
+    }
+    const response = await gotScraping(opts);
+    if (response.statusCode >= 400) {
+      const err = new Error(`HTTP ${response.statusCode} for ${url}: ${response.body?.slice(0, 300)}`);
+      err.status = response.statusCode;
+      throw err;
+    }
+    return response.body;
+  }
+
   // Collect entries from Atom feed
   const allEntries = [];
   let nextUrl = `https://gamejobs.co/search?q=${encodeURIComponent(query)}&format=atom`;
@@ -882,7 +910,7 @@ async function runGameJobsCo(source, kv) {
     let xml;
     try {
       xml = await withRetries(
-        () => fetchHtmlRetryable(nextUrl),
+        () => fetchWithProxy(nextUrl),
         { retries: 2, baseMs: 5000, maxMs: 30000, label: source.id },
       );
     } catch (err) {
@@ -1014,7 +1042,7 @@ async function runGameJobsCo(source, kv) {
       // Fetch from site
       try {
         const html = await withRetries(
-          () => fetchHtmlRetryable(entry.url),
+          () => fetchWithProxy(entry.url),
           { retries: 1, baseMs: 5000, maxMs: 20000, label: `${source.id}:detail` },
         );
         const detail = parseGameJobsDetail(html, entry.url);
