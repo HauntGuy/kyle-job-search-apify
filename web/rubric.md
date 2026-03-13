@@ -12,7 +12,6 @@ Jobs with seniority titles (Senior, Sr., Lead, Manager, Principal, Director, Hea
 - 7 years **Unity + C#**, client-side gameplay/UI/tools, mobile/casual games.
 - Some C++ and Lua; open to learning more.
 - Unity 2D preferred; 3D OK if not lead/architect of a large 3D system.
-- **NO Unreal Engine experience.** If a role **requires** Unreal Engine (UE4/UE5) and does not accept Unity as an alternative, score at **max 50**. Mentions of Unreal as "nice to have" are fine.
 - **Excels at customer-facing work**: demos, onboarding, support, stakeholder communication.
 - **Entry-level for customer-facing roles.** Kyle has never held a customer success, sales engineering, technical support, or account management title. Reject jobs that explicitly require **3+ years** of experience in those specific roles. **DO NOT reject based on "2 years experience required" or "1+ years" — that is within the acceptable range.** Many companies treat 1–2 year requirements as a soft filter and will interview strong candidates with adjacent experience.
 - **Domain-specific requirements are deal-breakers for Tier 3.** If a Tier 3 (adjacent) job requires industry/domain experience outside of software/technology (e.g., "10+ years in manufacturing," "fluent in Spanish," "2+ years MedTech experience," "2+ years in Financial Services," "CPA/CFA required"), reject it. This rule does NOT apply to Tier 1 or Tier 2 jobs — evaluate those normally based on game design and Unity/C# fit. General tech skills (SQL, APIs, SaaS, cloud) are NOT disqualifying for any tier — Kyle can learn those.
