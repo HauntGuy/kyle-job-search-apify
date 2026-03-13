@@ -464,6 +464,76 @@ function enrichRemoteStatus(job) {
   }
 }
 
+// --------------- Built In Description Enrichment ---------------
+
+const BUILTIN_DESC_CACHE_TTL_DAYS = 30;
+const BUILTIN_FETCH_DELAY_MS = 3000;
+
+/**
+ * Strip HTML tags from a string and produce clean plain text.
+ */
+function stripHtmlTags(html) {
+  return String(html || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '• ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * Fetch a Built In job page and extract the description from JSON-LD structured data.
+ * Returns { description, employmentType } or null if not found.
+ */
+async function fetchBuiltInDescription(url) {
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+    },
+  });
+  if (!res.ok) {
+    const err = new Error(`HTTP ${res.status} for ${url}`);
+    err.status = res.status;
+    throw err;
+  }
+  const html = await res.text();
+
+  // Extract JSON-LD structured data containing JobPosting
+  const ldJsonMatches = html.matchAll(/<script\s+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
+  for (const match of ldJsonMatches) {
+    try {
+      const data = JSON.parse(match[1]);
+      const postings = [];
+      if (data['@type'] === 'JobPosting') postings.push(data);
+      if (Array.isArray(data['@graph'])) {
+        for (const item of data['@graph']) {
+          if (item['@type'] === 'JobPosting') postings.push(item);
+        }
+      }
+      for (const posting of postings) {
+        if (posting.description) {
+          return {
+            description: stripHtmlTags(posting.description),
+            employmentType: posting.employmentType || '',
+          };
+        }
+      }
+    } catch { /* ignore malformed JSON-LD */ }
+  }
+  return null;
+}
+
 // --------------- Location Formatting ---------------
 
 const US_STATE_ABBREVS = {
@@ -1128,6 +1198,100 @@ Actor.main(async () => {
   }
   log.info(`Expired pre-filter: ${preExpiredSet.size} jobs have date_validthrough in the past and will be skipped.`);
 
+  // --- Built In description enrichment (fetch missing descriptions for pre-filter survivors) ---
+  const builtInEnrichment = { total: 0, cached: 0, fetched: 0, failed: 0, failedUrls: [] };
+
+  // Load description cache from KV store
+  let builtInDescCache = {};
+  try {
+    const rawCache = await kv.getValue('builtin_desc_cache.json');
+    if (rawCache && typeof rawCache === 'object') {
+      const cutoff = Date.now() - BUILTIN_DESC_CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
+      for (const [url, entry] of Object.entries(rawCache)) {
+        if (entry?.fetchedAt && new Date(entry.fetchedAt).getTime() >= cutoff) {
+          builtInDescCache[url] = entry;
+        }
+      }
+      const pruned = Object.keys(rawCache).length - Object.keys(builtInDescCache).length;
+      if (pruned > 0) log.info(`Built In desc cache: pruned ${pruned} expired entries (TTL ${BUILTIN_DESC_CACHE_TTL_DAYS}d).`);
+      log.info(`Built In desc cache loaded: ${Object.keys(builtInDescCache).length} entries.`);
+    }
+  } catch (err) {
+    log.warning(`Failed to load Built In desc cache: ${err?.message || err}`);
+  }
+
+  // Identify Built In jobs that pass all pre-filters and have empty descriptions
+  const builtInJobsToEnrich = [];
+  for (let i = 0; i < mergedJobs.length; i++) {
+    const job = mergedJobs[i];
+    if (preLocationMap.get(i) === 'no') continue;
+    if (titleDisqualifyReason(job.title || '')) continue;
+    if (preExpiredSet.has(i)) continue;
+    const sources = Array.isArray(job.sources) ? job.sources : [job.source].filter(Boolean);
+    if (!sources.some(s => String(s).startsWith('builtin_'))) continue;
+    if (job.description && job.description.trim().length > 0) continue;
+    builtInJobsToEnrich.push({ job, index: i });
+  }
+
+  builtInEnrichment.total = builtInJobsToEnrich.length;
+  if (builtInJobsToEnrich.length > 0) {
+    log.info(`Built In description enrichment: ${builtInJobsToEnrich.length} jobs need descriptions.`);
+
+    for (const { job } of builtInJobsToEnrich) {
+      const url = job.url || job.applyUrl;
+      if (!url) { builtInEnrichment.failed++; continue; }
+
+      // Check cache first
+      const cached = builtInDescCache[url];
+      if (cached?.description) {
+        job.description = cached.description;
+        if (cached.employmentType && !job.employmentType) {
+          job.employmentType = cached.employmentType;
+        }
+        builtInEnrichment.cached++;
+        continue;
+      }
+
+      // Fetch from Built In
+      try {
+        const result = await fetchBuiltInDescription(url);
+        if (result?.description) {
+          job.description = result.description;
+          builtInDescCache[url] = {
+            description: result.description,
+            employmentType: result.employmentType || '',
+            fetchedAt: nowIso(),
+          };
+          builtInEnrichment.fetched++;
+          if (result.employmentType && !job.employmentType) {
+            job.employmentType = result.employmentType;
+          }
+          log.info(`Built In enriched: "${job.title}" at ${job.company} (${result.description.length} chars)`);
+        } else {
+          builtInEnrichment.failed++;
+          builtInEnrichment.failedUrls.push(url);
+          log.warning(`Built In: no description found on page for "${job.title}" at ${job.company}`);
+        }
+      } catch (err) {
+        builtInEnrichment.failed++;
+        builtInEnrichment.failedUrls.push(url);
+        log.warning(`Built In fetch failed for "${job.title}" at ${job.company}: ${err?.message || err}`);
+      }
+
+      // Delay between fetches to avoid anti-bot measures
+      await sleep(BUILTIN_FETCH_DELAY_MS);
+    }
+
+    log.info(`Built In enrichment done: ${builtInEnrichment.fetched} fetched, ${builtInEnrichment.cached} cached, ${builtInEnrichment.failed} failed.`);
+  }
+
+  // Save description cache
+  try {
+    await kv.setValue('builtin_desc_cache.json', builtInDescCache);
+  } catch (err) {
+    log.warning(`Failed to save Built In desc cache: ${err?.message || err}`);
+  }
+
   // --- Scoring helper (reused for initial pass and re-score passes) ---
   async function scoreOneJob(job, idx) {
     // --- Pre-filter gates run BEFORE cache check ---
@@ -1480,6 +1644,12 @@ Actor.main(async () => {
     linkedinClosed: linkedinClosedCount,
     linkedinClosedCacheHits,
     linkedinEnriched: linkedinEnrichCount,
+    builtInEnrichment: {
+      total: builtInEnrichment.total,
+      cached: builtInEnrichment.cached,
+      fetched: builtInEnrichment.fetched,
+      failed: builtInEnrichment.failed,
+    },
     threshold,
     gateOnLocation,
     model,

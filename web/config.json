@@ -94,7 +94,7 @@
     {
       "id": "gracklehq",
       "type": "gracklehq",
-      "enabled": true,
+      "enabled": false,
       "country": "USA",
       "departments": ["Engineering", "Design"],
       "maxPages": 25

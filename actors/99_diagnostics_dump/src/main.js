@@ -214,6 +214,20 @@ Actor.main(async () => {
     warningBanners.push(`⚠️ ${w}`);
   }
 
+  // Built In description enrichment stats
+  const bie = scoringReport?.builtInEnrichment || {};
+  if (bie.total > 0) {
+    summaryItems.push(
+      `<li><b>Built In descriptions:</b> ${bie.total} needed, ${bie.fetched || 0} fetched, ${bie.cached || 0} cached, ${bie.failed || 0} failed</li>`
+    );
+    if (bie.failed > 0) {
+      warningBanners.push(
+        `⚠️ ${bie.failed} Built In job description${bie.failed === 1 ? '' : 's'} could not be fetched. ` +
+        `These jobs were scored without descriptions. Consider proxy rotation if this persists.`
+      );
+    }
+  }
+
   // Cap warnings — sources that may have more results than we retrieved
   const capWarnings = Array.isArray(collectReport.capWarnings) ? collectReport.capWarnings : [];
   for (const cw of capWarnings) {
