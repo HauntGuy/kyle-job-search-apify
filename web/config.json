@@ -100,6 +100,33 @@
       "maxPages": 25
     },
     {
+      "id": "gamejobs_co_unity",
+      "type": "gamejobs_co",
+      "enabled": true,
+      "query": "unity",
+      "maxPages": 3,
+      "fetchDetails": true,
+      "detailDelayMs": 6000
+    },
+    {
+      "id": "gamejobs_co_gamedev",
+      "type": "gamejobs_co",
+      "enabled": true,
+      "query": "game developer",
+      "maxPages": 3,
+      "fetchDetails": true,
+      "detailDelayMs": 6000
+    },
+    {
+      "id": "gamejobs_co_designer",
+      "type": "gamejobs_co",
+      "enabled": true,
+      "query": "game designer",
+      "maxPages": 3,
+      "fetchDetails": true,
+      "detailDelayMs": 6000
+    },
+    {
       "id": "builtin_unity",
       "type": "builtin",
       "enabled": true,

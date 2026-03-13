@@ -737,7 +737,291 @@ async function runUSAJobs(source) {
   return { jobs, meta: { itemCount: jobs.length, totalAvailable: totalCount, hitCap } };
 }
 
-// --------------- Mantiks Indeed API (indeed12.p.rapidapi.com) ---------------
+// --------------- GameJobs.co (Atom feed + detail pages) ---------------
+
+function normalizeGameJobsCo(sourceId, item) {
+  return {
+    source: sourceId,
+    fetchedAt: nowIso(),
+    title: item.title || '',
+    company: item.company || '',
+    companyUrl: canonicalizeUrl(item.companyUrl || ''),
+    location: item.location || '',
+    url: canonicalizeUrl(item.url || ''),
+    applyUrl: canonicalizeUrl(item.applyUrl || item.url || ''),
+    postedAt: toIsoOrEmpty(item.postedAt || ''),
+    description: (item.description || '').slice(0, 15000),
+    salary: item.salary || '',
+    sourceJobId: String(item.id || ''),
+    employmentType: item.employmentType || '',
+    raw: item,
+  };
+}
+
+/**
+ * Parse a GameJobs.co detail page HTML to extract job metadata.
+ * Tries JSON-LD first, falls back to HTML parsing.
+ */
+function parseGameJobsDetail(html, url) {
+  const $ = cheerioLoad(html);
+  const result = {};
+
+  // --- Try JSON-LD first ---
+  const ldScript = $('script[type="application/ld+json"]').first();
+  if (ldScript.length) {
+    try {
+      const ld = JSON.parse(ldScript.html());
+      if (ld['@type'] === 'JobPosting') {
+        result.title = ld.title || '';
+        result.company = ld.hiringOrganization?.name || '';
+        result.location = typeof ld.jobLocation?.address === 'string'
+          ? ld.jobLocation.address
+          : (ld.jobLocation?.address?.addressLocality || ld.jobLocation?.address?.name || '');
+        result.postedAt = ld.datePosted || '';
+        // Description is HTML-encoded in JSON-LD; strip tags
+        if (ld.description) {
+          result.description = stripHtmlTags(ld.description);
+        }
+        if (ld.employmentType) {
+          result.employmentType = Array.isArray(ld.employmentType)
+            ? ld.employmentType[0] : String(ld.employmentType);
+        }
+        if (ld.baseSalary) {
+          const bs = ld.baseSalary;
+          const val = bs.value;
+          if (val?.minValue && val?.maxValue) {
+            result.salary = `$${Number(val.minValue).toLocaleString()}-$${Number(val.maxValue).toLocaleString()} ${val.unitText || ''}`.trim();
+          } else if (val?.value) {
+            result.salary = `$${Number(val.value).toLocaleString()} ${val.unitText || ''}`.trim();
+          }
+        }
+      }
+    } catch (e) {
+      // JSON-LD parse failure, fall through to HTML
+    }
+  }
+
+  // --- HTML fallback / supplement ---
+  const article = $('article').first();
+  if (article.length) {
+    if (!result.title) {
+      result.title = article.find('h1').first().text().trim();
+    }
+    if (!result.company) {
+      const companyEl = article.find('a.c').first();
+      result.company = companyEl.text().trim();
+      result.companyUrl = companyEl.attr('href') || '';
+      if (result.companyUrl && !result.companyUrl.startsWith('http')) {
+        result.companyUrl = `https://gamejobs.co${result.companyUrl}`;
+      }
+    }
+    if (!result.location) {
+      const locEl = article.find('a.w').first();
+      result.location = locEl.text().trim();
+    }
+    // Apply URL from the "Apply" button
+    const applyBtn = article.find('a.btn[href]').first();
+    if (applyBtn.length) {
+      const href = applyBtn.attr('href') || '';
+      if (href.startsWith('http')) result.applyUrl = href;
+    }
+    // Job ID from save form data-job-id attribute
+    const saveForm = article.find('form.save-job').first();
+    if (saveForm.length) {
+      result.jobId = saveForm.attr('data-job-id') || '';
+    }
+    // Description from article paragraphs (if not from JSON-LD)
+    if (!result.description) {
+      const paragraphs = [];
+      article.find('p, ul, ol').each((_, el) => {
+        paragraphs.push($(el).text().trim());
+      });
+      result.description = paragraphs.filter(Boolean).join('\n\n');
+    }
+  }
+
+  return result;
+}
+
+function stripHtmlTags(html) {
+  if (!html) return '';
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+async function runGameJobsCo(source) {
+  const query = String(source.query || '').trim();
+  if (!query) throw new Error(`[${source.id}] Missing source.query`);
+
+  const maxPages = source.maxPages || 3;
+  const detailDelayMs = source.detailDelayMs || 6000;
+  const fetchDetails = source.fetchDetails !== false;
+
+  // Collect entries from Atom feed
+  const allEntries = [];
+  let nextUrl = `https://gamejobs.co/search?q=${encodeURIComponent(query)}&format=atom`;
+  let pagesFetched = 0;
+  let lastPageHadEntries = false;
+
+  for (let page = 1; page <= maxPages && nextUrl; page++) {
+    log.info(`[${source.id}] GET ${nextUrl} (page ${page}/${maxPages})`);
+
+    let xml;
+    try {
+      xml = await withRetries(
+        () => fetchHtmlRetryable(nextUrl),
+        { retries: 2, baseMs: 5000, maxMs: 30000, label: source.id },
+      );
+    } catch (err) {
+      log.warning(`[${source.id}] Failed to fetch feed page ${page}: ${err.message}. Stopping.`);
+      break;
+    }
+
+    const $ = cheerioLoad(xml, { xmlMode: true });
+    const entries = $('entry');
+
+    if (entries.length === 0) {
+      log.info(`[${source.id}] Page ${page}: no entries, stopping.`);
+      break;
+    }
+
+    entries.each((_, el) => {
+      const $e = $(el);
+      const fullTitle = $e.find('title').first().text().trim();
+      const link = $e.find('link[rel="alternate"]').attr('href')
+        || $e.find('link').attr('href') || '';
+      const updated = $e.find('updated').first().text().trim();
+
+      // Title format: "Job Title at Company"
+      let title = fullTitle;
+      let company = '';
+      const atIdx = fullTitle.lastIndexOf(' at ');
+      if (atIdx > 0) {
+        title = fullTitle.slice(0, atIdx).trim();
+        company = fullTitle.slice(atIdx + 4).trim();
+      }
+
+      // Extract ID from URL: trailing number or full slug
+      const idMatch = link.match(/\/([^/]+?)(?:-(\d+))?$/);
+      const numericId = idMatch && idMatch[2] ? idMatch[2] : '';
+      const slug = idMatch ? idMatch[1] + (idMatch[2] ? `-${idMatch[2]}` : '') : '';
+
+      if (link) {
+        allEntries.push({
+          title,
+          company,
+          url: link.startsWith('http') ? link : `https://gamejobs.co${link}`,
+          postedAt: updated,
+          id: numericId || slug,
+          slug,
+        });
+      }
+    });
+
+    pagesFetched++;
+    lastPageHadEntries = entries.length > 0;
+    log.info(`[${source.id}] Page ${page}: ${entries.length} entries (total ${allEntries.length})`);
+
+    // Get next page URL
+    const nextLink = $('link[rel="next"]').attr('href');
+    nextUrl = nextLink || null;
+
+    // Delay between feed pages
+    if (nextUrl && page < maxPages) {
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+
+  log.info(`[${source.id}] Atom feed: ${allEntries.length} entries from ${pagesFetched} pages`);
+
+  // Deduplicate entries by URL
+  const seenUrls = new Set();
+  const uniqueEntries = [];
+  for (const entry of allEntries) {
+    const key = entry.url.toLowerCase();
+    if (!seenUrls.has(key)) {
+      seenUrls.add(key);
+      uniqueEntries.push(entry);
+    }
+  }
+  if (uniqueEntries.length < allEntries.length) {
+    log.info(`[${source.id}] Deduplicated: ${allEntries.length} → ${uniqueEntries.length}`);
+  }
+
+  // Fetch detail pages if enabled
+  let detailsFetched = 0;
+  let detailsFailed = 0;
+
+  if (fetchDetails && uniqueEntries.length > 0) {
+    log.info(`[${source.id}] Fetching ${uniqueEntries.length} detail pages (${detailDelayMs}ms delay)...`);
+
+    for (let i = 0; i < uniqueEntries.length; i++) {
+      const entry = uniqueEntries[i];
+      try {
+        const html = await withRetries(
+          () => fetchHtmlRetryable(entry.url),
+          { retries: 1, baseMs: 5000, maxMs: 20000, label: `${source.id}:detail` },
+        );
+        const detail = parseGameJobsDetail(html, entry.url);
+
+        // Merge detail into entry (detail wins for non-empty fields)
+        if (detail.title) entry.title = detail.title;
+        if (detail.company) entry.company = detail.company;
+        if (detail.companyUrl) entry.companyUrl = detail.companyUrl;
+        if (detail.location) entry.location = detail.location;
+        if (detail.applyUrl) entry.applyUrl = detail.applyUrl;
+        if (detail.description) entry.description = detail.description;
+        if (detail.salary) entry.salary = detail.salary;
+        if (detail.employmentType) entry.employmentType = detail.employmentType;
+        if (detail.postedAt) entry.postedAt = detail.postedAt;
+        if (detail.jobId) entry.id = detail.jobId;
+
+        detailsFetched++;
+      } catch (err) {
+        log.warning(`[${source.id}] Detail page failed (${i + 1}/${uniqueEntries.length}): ${entry.url} — ${err.message}`);
+        detailsFailed++;
+      }
+
+      // Delay between detail fetches (not after last one)
+      if (i < uniqueEntries.length - 1) {
+        await new Promise(r => setTimeout(r, detailDelayMs));
+      }
+
+      // Progress log every 25 pages
+      if ((i + 1) % 25 === 0) {
+        log.info(`[${source.id}] Detail progress: ${i + 1}/${uniqueEntries.length} (${detailsFetched} ok, ${detailsFailed} failed)`);
+      }
+    }
+
+    log.info(`[${source.id}] Detail pages: ${detailsFetched} fetched, ${detailsFailed} failed`);
+  }
+
+  const hitCap = pagesFetched >= maxPages && lastPageHadEntries;
+  const jobs = uniqueEntries.map(item => normalizeGameJobsCo(source.id, item));
+  return {
+    jobs,
+    meta: {
+      itemCount: jobs.length,
+      pagesFetched,
+      maxPages,
+      hitCap,
+      detailsFetched,
+      detailsFailed,
+    },
+  };
+}
+
+// --------------- Source dispatcher ---------------
 
 async function runSource(source, config, remaining) {
   const globalMax = Number(config?.run?.maxItemsPerSource || 300) || 300;
@@ -749,6 +1033,7 @@ async function runSource(source, config, remaining) {
   if (type === 'gracklehq') return await runGrackleHQ(source);
   if (type === 'builtin') return await runBuiltIn(source);
   if (type === 'usajobs') return await runUSAJobs(source);
+  if (type === 'gamejobs_co') return await runGameJobsCo(source);
 
   throw new Error(`[${source.id}] Unknown source.type=${source.type}`);
 }
@@ -762,6 +1047,7 @@ function collectedFriendlySource(sourceId) {
   if (s.startsWith('linkedin_')) return 'LinkedIn';
   if (s.startsWith('builtin_')) return 'BuiltIn';
   if (s.startsWith('usajobs_')) return 'USAJobs';
+  if (s.startsWith('gamejobs_co')) return 'GameJobs';
   const map = {
     'fantastic_feed': 'Fantastic',
     'linkedin_jobs': 'LinkedIn',
@@ -779,6 +1065,7 @@ function jobIdPrefix(sourceId) {
   if (s.startsWith('builtin_')) return 'B';
   if (s.startsWith('usajobs_')) return 'U';
   if (s === 'gracklehq') return 'G';
+  if (s.startsWith('gamejobs_co')) return 'GJ';
   return '?';
 }
 

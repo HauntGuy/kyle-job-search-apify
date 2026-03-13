@@ -407,6 +407,7 @@ function friendlySourceName(sourceId) {
   if (s.startsWith('builtin_'))  return 'Built In';
   if (s.startsWith('usajobs_'))  return 'USAJobs';
   if (s === 'gracklehq')         return 'GrackleHQ';
+  if (s.startsWith('gamejobs_co')) return 'GameJobs';
   return s;
 }
 

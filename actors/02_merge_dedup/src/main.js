@@ -122,6 +122,7 @@ function jobIdPrefix(sourceId) {
   if (s.startsWith('builtin_')) return 'B';
   if (s.startsWith('usajobs_')) return 'U';
   if (s === 'gracklehq') return 'G';
+  if (s.startsWith('gamejobs_co')) return 'GJ';
   return '?';
 }
 
