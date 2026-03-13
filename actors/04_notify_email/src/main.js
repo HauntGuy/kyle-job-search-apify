@@ -68,6 +68,13 @@ Actor.main(async () => {
   const acceptedCount = Number(scoringReport?.accepted ?? 0) || 0;
   const totalScored = Number(scoringReport?.totalScored ?? 0) || 0;
 
+  // Read run number from KV store (set by orchestrator)
+  let runNumber = null;
+  try {
+    const runMeta = await kv.getValue('run_meta.json');
+    if (runMeta?.runNumber) runNumber = runMeta.runNumber;
+  } catch { /* run number is optional */ }
+
   const sendEvenIfEmpty = notifyCfg.sendEvenIfEmpty !== false;
 
   if (!acceptedXlsx && !sendEvenIfEmpty) {
@@ -76,7 +83,8 @@ Actor.main(async () => {
     return;
   }
 
-  const subject = `${subjectPrefix} Accepted: ${acceptedCount} (Scored: ${totalScored})`;
+  const runLabel = runNumber != null ? ` Run ${runNumber},` : '';
+  const subject = `${subjectPrefix}${runLabel} Accepted: ${acceptedCount} (Scored: ${totalScored})`;
 
   const diagnosticsUrl = config?.diagnostics?.publicDiagnosticsUrl || '';
   const unscoredCount = Number(scoringReport?.unscoredCount || 0);
