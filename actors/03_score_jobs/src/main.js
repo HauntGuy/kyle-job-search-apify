@@ -510,7 +510,8 @@ async function fetchBuiltInDescription(url) {
   const html = await res.text();
 
   // Extract JSON-LD structured data containing JobPosting
-  const ldJsonMatches = html.matchAll(/<script\s+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
+  // Note: Built In encodes the "+" as &#x2B; in the type attribute, so we match both
+  const ldJsonMatches = html.matchAll(/<script\s+type=["']application\/ld(?:\+|&#x2B;)json["'][^>]*>([\s\S]*?)<\/script>/gi);
   for (const match of ldJsonMatches) {
     try {
       const data = JSON.parse(match[1]);
