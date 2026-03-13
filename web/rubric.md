@@ -1,9 +1,10 @@
-# Rubric: Kyle job search (v15)
+# Rubric: Kyle job search (v16)
 
 Evaluate a job posting for **Kyle Forgaard**. Return JSON with: `accept` (bool), `score` (0–100), `confidence` (0.0–1.0), `reason_short` (1 sentence), `reasons` (short bullets), `red_flags` (short bullets), `tags` (short tags), `salary_extracted` (string or ""), `company_url` (string or ""), `role` (array from: "Game Designer", "Programmer", "EdTech", "App Support", "Customer Success" — may combine). **`role` rules:** Use "Programmer" ONLY for roles where the primary job duty is writing code (Unity dev, C# dev, gameplay engineer). Solutions Engineer, Sales Engineer, Implementation roles, and Support roles are NOT "Programmer" — classify them as "Customer Success" or "App Support".
 
-Jobs with bad locations have already been filtered out. Do not evaluate location.
-Jobs with seniority titles (Senior, Sr., Lead, Manager, Principal, Director, Head, VP, Chief, Staff) have already been filtered out. You will not see them.
+Jobs with bad locations have already been filtered out. Do not evaluate location. However, if the description explicitly restricts applicants to a specific region **outside** Massachusetts/New England/the Northeastern US (e.g., "only applicants in British Columbia," "must reside in Texas"), add a red flag and score at **max 50**. Kyle lives in Lexington, MA.
+
+Jobs with seniority titles (Senior, Sr., Lead, Manager, Principal, Director, Head, VP, Chief, Staff) have already been filtered out by title. However, some jobs have generic titles but the **description** reveals the role is actually senior-level (e.g., "we are looking for a Senior Unity Engineer" or "Lead Designer position"). If the description makes clear the role requires senior/lead/staff/principal/director-level experience, score it at **max 50** regardless of the job title.
 
 ## Candidate
 
@@ -11,9 +12,10 @@ Jobs with seniority titles (Senior, Sr., Lead, Manager, Principal, Director, Hea
 - 7 years **Unity + C#**, client-side gameplay/UI/tools, mobile/casual games.
 - Some C++ and Lua; open to learning more.
 - Unity 2D preferred; 3D OK if not lead/architect of a large 3D system.
+- **NO Unreal Engine experience.** If a role **requires** Unreal Engine (UE4/UE5) and does not accept Unity as an alternative, score at **max 50**. Mentions of Unreal as "nice to have" are fine.
 - **Excels at customer-facing work**: demos, onboarding, support, stakeholder communication.
 - **Entry-level for customer-facing roles.** Kyle has never held a customer success, sales engineering, technical support, or account management title. Reject jobs that explicitly require **3+ years** of experience in those specific roles. **DO NOT reject based on "2 years experience required" or "1+ years" — that is within the acceptable range.** Many companies treat 1–2 year requirements as a soft filter and will interview strong candidates with adjacent experience.
-- **Domain-specific requirements are deal-breakers for Tier 3.** If a Tier 3 (adjacent) job requires industry/domain experience outside of software/technology (e.g., "10+ years in manufacturing," "fluent in Spanish," "2+ years MedTech experience," "CPA/CFA required"), reject it. This rule does NOT apply to Tier 1 or Tier 2 jobs — evaluate those normally based on game design and Unity/C# fit. General tech skills (SQL, APIs, SaaS, cloud) are NOT disqualifying for any tier — Kyle can learn those.
+- **Domain-specific requirements are deal-breakers for Tier 3.** If a Tier 3 (adjacent) job requires industry/domain experience outside of software/technology (e.g., "10+ years in manufacturing," "fluent in Spanish," "2+ years MedTech experience," "2+ years in Financial Services," "CPA/CFA required"), reject it. This rule does NOT apply to Tier 1 or Tier 2 jobs — evaluate those normally based on game design and Unity/C# fit. General tech skills (SQL, APIs, SaaS, cloud) are NOT disqualifying for any tier — Kyle can learn those.
 - NOT a fit for backend-primary, full-stack-primary, or React-heavy roles.
 - NOT a fit for C# backend (ASP.NET Core, Entity Framework, Web API) even if titled "C# Developer."
 
@@ -30,10 +32,9 @@ Game Designer, Level Designer, Systems Designer, Combat Designer, Economy Design
 Unity Developer, C# client-side (WPF/MAUI/Avalonia), Gameplay Engineer, UI Programmer, Tools Engineer, Technical Designer with scripting.
 
 **Tier 3 — Adjacent** (score 70–80, BUT only at technology/software companies):
-- Sales Engineer, Solutions Engineer/Consultant — pre-sales technical roles with demos/POCs
-- Implementation Specialist/Consultant — onboarding and configuring software
+- Sales Engineer — pre-sales technical roles with demos/POCs
+- Implementation Specialist — onboarding and configuring software
 - Application Support — configuring/troubleshooting software products (NOT phone help desk)
-- Technical Support Engineer — deep technical troubleshooting (NOT Tier 1 phone queue)
 - EdTech roles where game dev experience adds value
 
 **CRITICAL — "tech company" test for Tier 3:** Kyle wants to work for companies whose core business IS software/technology. A software company that serves dentists or farmers = GOOD (it's a tech company). A tractor manufacturer, hospital chain, bank, or retailer with an IT department = BAD (NOT a tech company). **If the employer is not a technology/software company, score 40–60 max regardless of title.**

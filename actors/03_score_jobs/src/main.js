@@ -483,6 +483,32 @@ const US_STATE_ABBREVS = {
 };
 const STATE_ABBREV_SET = new Set(Object.values(US_STATE_ABBREVS));
 
+// Common country names → ISO 3166-1 alpha-3 codes
+const COUNTRY_NAME_TO_CODE = {
+  'afghanistan': 'AFG', 'argentina': 'ARG', 'australia': 'AUS', 'austria': 'AUT',
+  'bangladesh': 'BGD', 'belgium': 'BEL', 'brazil': 'BRA', 'bulgaria': 'BGR',
+  'canada': 'CAN', 'chile': 'CHL', 'china': 'CHN', 'colombia': 'COL',
+  'costa rica': 'CRI', 'croatia': 'HRV', 'czech republic': 'CZE', 'czechia': 'CZE',
+  'denmark': 'DNK', 'dominican republic': 'DOM', 'ecuador': 'ECU', 'egypt': 'EGY',
+  'estonia': 'EST', 'finland': 'FIN', 'france': 'FRA', 'germany': 'DEU',
+  'greece': 'GRC', 'hungary': 'HUN', 'iceland': 'ISL', 'india': 'IND',
+  'indonesia': 'IDN', 'iran': 'IRN', 'iraq': 'IRQ', 'ireland': 'IRL',
+  'israel': 'ISR', 'italy': 'ITA', 'japan': 'JPN', 'jordan': 'JOR',
+  'kenya': 'KEN', 'latvia': 'LVA', 'lithuania': 'LTU', 'luxembourg': 'LUX',
+  'malaysia': 'MYS', 'mexico': 'MEX', 'méxico': 'MEX', 'morocco': 'MAR',
+  'netherlands': 'NLD', 'new zealand': 'NZL', 'nigeria': 'NGA', 'norway': 'NOR',
+  'pakistan': 'PAK', 'panama': 'PAN', 'peru': 'PER', 'philippines': 'PHL',
+  'poland': 'POL', 'portugal': 'PRT', 'romania': 'ROU', 'russia': 'RUS',
+  'saudi arabia': 'SAU', 'serbia': 'SRB', 'singapore': 'SGP', 'slovakia': 'SVK',
+  'slovenia': 'SVN', 'south africa': 'ZAF', 'south korea': 'KOR', 'spain': 'ESP',
+  'sweden': 'SWE', 'switzerland': 'CHE', 'taiwan': 'TWN', 'thailand': 'THA',
+  'turkey': 'TUR', 'türkiye': 'TUR', 'ukraine': 'UKR',
+  'united arab emirates': 'ARE', 'uae': 'ARE',
+  'united kingdom': 'GBR', 'uk': 'GBR', 'england': 'GBR', 'scotland': 'GBR', 'wales': 'GBR',
+  'uruguay': 'URY', 'venezuela': 'VEN', 'vietnam': 'VNM',
+  'british columbia': 'CAN',  // province, not a country, but foreign to Kyle
+};
+
 const MA_INDICATORS = ['massachusetts', ' ma', 'boston', 'lexington', 'cambridge',
   'waltham', 'woburn', 'burlington', 'bedford', 'concord', 'framingham'];
 
@@ -516,11 +542,18 @@ function formatLocationPart(part) {
   }
 
   if (stateAbbrev) return city ? `${city} ${stateAbbrev}` : stateAbbrev;
-  if (hasUS) return city || 'US';
+  if (hasUS) return city || 'USA';
 
   // Foreign: if last segment is a 2-3 letter country code, show only that
   const last = segments[segments.length - 1];
   if (/^[A-Z]{2,3}$/.test(last) && segments.length >= 2) return last;
+
+  // Foreign: if last segment is a known country name, convert to ISO 3-letter code
+  const lastLower = last.toLowerCase();
+  const countryCode = COUNTRY_NAME_TO_CODE[lastLower];
+  if (countryCode && segments.length >= 2) return countryCode;
+  // Standalone country name (no city)
+  if (countryCode && segments.length === 1) return countryCode;
 
   // Fallback: rejoin without commas
   return segments.join(' ');
