@@ -880,11 +880,22 @@ async function runGameJobsCo(source, kv) {
     log.warning(`[${source.id}] Could not create residential proxy: ${err?.message || err}. Falling back to direct.`);
   }
 
+  // Consistent browser fingerprint for this source run (avoids Chrome UA + Firefox TLS mismatch)
+  const sessionToken = `gamejobs-${Date.now()}`;
+  const headerGenOpts = {
+    browsers: [{ name: 'chrome', minVersion: 120 }],
+    devices: ['desktop'],
+    operatingSystems: ['windows'],
+    locales: ['en-US'],
+  };
+
   async function fetchWithProxy(url) {
     const opts = {
       url,
       responseType: 'text',
       timeout: { request: 30000 },
+      sessionToken,
+      headerGeneratorOptions: headerGenOpts,
     };
     if (proxyConfig) {
       opts.proxyUrl = await proxyConfig.newUrl();
@@ -896,6 +907,11 @@ async function runGameJobsCo(source, kv) {
       throw err;
     }
     return response.body;
+  }
+
+  // Randomized delay to avoid Cloudflare detecting fixed intervals (3-9 seconds)
+  function randomDelay() {
+    return 3000 + Math.floor(Math.random() * 6000);
   }
 
   // Collect entries from Atom feed
@@ -967,9 +983,9 @@ async function runGameJobsCo(source, kv) {
     const nextLink = $('link[rel="next"]').attr('href');
     nextUrl = nextLink || null;
 
-    // Delay between feed pages
+    // Delay between feed pages (randomized to avoid bot detection)
     if (nextUrl && page < maxPages) {
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, randomDelay()));
     }
   }
 
@@ -1018,6 +1034,22 @@ async function runGameJobsCo(source, kv) {
   if (fetchDetails && uniqueEntries.length > 0) {
     log.info(`[${source.id}] Fetching ${uniqueEntries.length} detail pages (${detailDelayMs}ms delay)...`);
 
+    // Helper: apply cached/fetched detail to an entry
+    function applyDetail(entry, detail) {
+      if (detail.title) entry.title = detail.title;
+      if (detail.company) entry.company = detail.company;
+      if (detail.companyUrl) entry.companyUrl = detail.companyUrl;
+      if (detail.location) entry.location = detail.location;
+      if (detail.applyUrl) entry.applyUrl = detail.applyUrl;
+      if (detail.description) entry.description = detail.description;
+      if (detail.salary) entry.salary = detail.salary;
+      if (detail.employmentType) entry.employmentType = detail.employmentType;
+      if (detail.postedAt) entry.postedAt = detail.postedAt;
+      if (detail.jobId) entry.id = detail.jobId;
+    }
+
+    const failedEntries = []; // collect 403'd entries for retry
+
     for (let i = 0; i < uniqueEntries.length; i++) {
       const entry = uniqueEntries[i];
       const cacheKey = entry.url.toLowerCase();
@@ -1025,16 +1057,7 @@ async function runGameJobsCo(source, kv) {
       // Check cache first
       const cached = detailCache[cacheKey];
       if (cached) {
-        if (cached.title) entry.title = cached.title;
-        if (cached.company) entry.company = cached.company;
-        if (cached.companyUrl) entry.companyUrl = cached.companyUrl;
-        if (cached.location) entry.location = cached.location;
-        if (cached.applyUrl) entry.applyUrl = cached.applyUrl;
-        if (cached.description) entry.description = cached.description;
-        if (cached.salary) entry.salary = cached.salary;
-        if (cached.employmentType) entry.employmentType = cached.employmentType;
-        if (cached.postedAt) entry.postedAt = cached.postedAt;
-        if (cached.jobId) entry.id = cached.jobId;
+        applyDetail(entry, cached);
         detailsCached++;
         continue;
       }
@@ -1046,34 +1069,20 @@ async function runGameJobsCo(source, kv) {
           { retries: 1, baseMs: 5000, maxMs: 20000, label: `${source.id}:detail` },
         );
         const detail = parseGameJobsDetail(html, entry.url);
-
-        // Merge detail into entry (detail wins for non-empty fields)
-        if (detail.title) entry.title = detail.title;
-        if (detail.company) entry.company = detail.company;
-        if (detail.companyUrl) entry.companyUrl = detail.companyUrl;
-        if (detail.location) entry.location = detail.location;
-        if (detail.applyUrl) entry.applyUrl = detail.applyUrl;
-        if (detail.description) entry.description = detail.description;
-        if (detail.salary) entry.salary = detail.salary;
-        if (detail.employmentType) entry.employmentType = detail.employmentType;
-        if (detail.postedAt) entry.postedAt = detail.postedAt;
-        if (detail.jobId) entry.id = detail.jobId;
+        applyDetail(entry, detail);
 
         // Save to cache
-        detailCache[cacheKey] = {
-          ...detail,
-          fetchedAt: new Date().toISOString(),
-        };
-
+        detailCache[cacheKey] = { ...detail, fetchedAt: new Date().toISOString() };
         detailsFetched++;
       } catch (err) {
         log.warning(`[${source.id}] Detail page failed (${i + 1}/${uniqueEntries.length}): ${entry.url} — ${err.message}`);
+        failedEntries.push(entry);
         detailsFailed++;
       }
 
-      // Delay between detail fetches (not after last one)
+      // Randomized delay between detail fetches (not after last one)
       if (i < uniqueEntries.length - 1) {
-        await new Promise(r => setTimeout(r, detailDelayMs));
+        await new Promise(r => setTimeout(r, randomDelay()));
       }
 
       // Progress log every 25 pages
@@ -1083,6 +1092,42 @@ async function runGameJobsCo(source, kv) {
     }
 
     log.info(`[${source.id}] Detail pages: ${detailsFetched} fetched, ${detailsCached} cached, ${detailsFailed} failed`);
+
+    // Retry pass: re-attempt 403'd pages in shuffled order (different IP + timing)
+    if (failedEntries.length > 0) {
+      // Shuffle using Fisher-Yates
+      for (let i = failedEntries.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [failedEntries[i], failedEntries[j]] = [failedEntries[j], failedEntries[i]];
+      }
+
+      log.info(`[${source.id}] Retry pass: ${failedEntries.length} failed pages (shuffled)...`);
+      let retryOk = 0;
+      let retryFail = 0;
+
+      for (let i = 0; i < failedEntries.length; i++) {
+        const entry = failedEntries[i];
+        const cacheKey = entry.url.toLowerCase();
+
+        try {
+          const html = await fetchWithProxy(entry.url); // single attempt, no withRetries
+          const detail = parseGameJobsDetail(html, entry.url);
+          applyDetail(entry, detail);
+          detailCache[cacheKey] = { ...detail, fetchedAt: new Date().toISOString() };
+          retryOk++;
+          detailsFetched++;
+          detailsFailed--; // un-count the earlier failure
+        } catch {
+          retryFail++;
+        }
+
+        if (i < failedEntries.length - 1) {
+          await new Promise(r => setTimeout(r, randomDelay()));
+        }
+      }
+
+      log.info(`[${source.id}] Retry pass done: ${retryOk} recovered, ${retryFail} still failed.`);
+    }
   }
 
   // Save detail cache back to KV store
