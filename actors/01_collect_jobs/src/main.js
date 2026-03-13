@@ -1085,9 +1085,14 @@ async function runGameJobsCo(source, kv) {
         await new Promise(r => setTimeout(r, randomDelay()));
       }
 
-      // Progress log every 25 pages
+      // Progress log + incremental cache save every 25 pages
       if ((i + 1) % 25 === 0) {
         log.info(`[${source.id}] Detail progress: ${i + 1}/${uniqueEntries.length} (${detailsFetched} fetched, ${detailsCached} cached, ${detailsFailed} failed)`);
+        // Save cache incrementally so progress survives timeouts
+        if (kv && detailsFetched > 0) {
+          try { await kv.setValue(GAMEJOBS_CACHE_KEY, detailCache); }
+          catch { /* non-fatal */ }
+        }
       }
     }
 
