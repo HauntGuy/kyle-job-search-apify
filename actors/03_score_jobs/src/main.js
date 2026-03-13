@@ -360,14 +360,78 @@ const COMMUTABLE_TOWNS = new Set([
  *   "Boston, Massachusetts, United States; Cambridge, Massachusetts, United States"
  *   "" (blank)
  */
+/**
+ * Check if a location string contains a known foreign country name or code.
+ * Handles comma-separated ("Boston, Massachusetts, United States"),
+ * dash-separated ("Japan-Tokyo-Business Tower Japan"),
+ * space-separated ("Brighton England United Kingdom"),
+ * and trailing 2-letter ISO codes ("Stockholm 118 63 SE", "Jakarta id").
+ */
+function containsForeignCountry(locationStr) {
+  const lower = locationStr.toLowerCase();
+
+  // Skip if it mentions US-domestic indicators
+  const usDomestic = ['united states', 'united states of america'];
+  for (const us of usDomestic) {
+    if (lower.includes(us)) return false;
+  }
+
+  // Tokenize on commas, dashes, pipes, semicolons, colons, and spaces
+  const tokens = lower.split(/[,\-|;:\s]+/).map(t => t.trim()).filter(Boolean);
+
+  // Check trailing 2-letter ISO code (e.g., "se", "fr", "id", "ca")
+  if (tokens.length >= 2) {
+    const lastToken = tokens[tokens.length - 1];
+    if (lastToken.length === 2 && ISO2_FOREIGN_CODES[lastToken]) {
+      return true;
+    }
+  }
+
+  // Check single tokens against COUNTRY_NAME_TO_CODE
+  for (const token of tokens) {
+    if (['us', 'usa'].includes(token)) return false; // domestic
+    if (COUNTRY_NAME_TO_CODE[token]) return true;
+  }
+
+  // Check multi-word country names (2-word and 3-word combos)
+  for (let i = 0; i < tokens.length - 1; i++) {
+    const twoWord = `${tokens[i]} ${tokens[i + 1]}`;
+    if (COUNTRY_NAME_TO_CODE[twoWord]) return true;
+    if (i < tokens.length - 2) {
+      const threeWord = `${twoWord} ${tokens[i + 2]}`;
+      if (COUNTRY_NAME_TO_CODE[threeWord]) return true;
+    }
+  }
+
+  // Check for standalone 3-letter ISO codes (e.g., "GBR", "JPN", "CAN")
+  for (const token of tokens) {
+    if (token.length === 3 && /^[a-z]{3}$/.test(token)) {
+      const upper = token.toUpperCase();
+      // Check if it's a known 3-letter country code (values in our maps)
+      const knownCodes = new Set(Object.values(COUNTRY_NAME_TO_CODE));
+      if (knownCodes.has(upper) && upper !== 'USA') return true;
+    }
+  }
+
+  return false;
+}
+
 function computeLocationOk(locationStr) {
   const loc = String(locationStr || '').trim();
   if (!loc) return 'unknown';
 
-  const lower = loc.toLowerCase();
+  const hasRemote = /\bremote\b/i.test(loc);
+  const hasForeign = containsForeignCountry(loc);
 
-  // If "remote" appears anywhere, it's OK
-  if (/\bremote\b/i.test(loc)) return 'yes';
+  // Remote + foreign country (e.g., "Remote - Canada", "Remote | Jakarta ID")
+  // → ambiguous, let LLM decide
+  if (hasRemote && hasForeign) return 'unknown';
+
+  // Remote with no foreign country → OK
+  if (hasRemote) return 'yes';
+
+  // Foreign country detected, not remote → definitely not commutable
+  if (hasForeign) return 'no';
 
   // Split on semicolons (multi-location listings) and pipes (Remote | City)
   const parts = loc.split(/[;|]/).map(p => p.trim()).filter(Boolean);
@@ -579,6 +643,22 @@ const COUNTRY_NAME_TO_CODE = {
   'united kingdom': 'GBR', 'uk': 'GBR', 'england': 'GBR', 'scotland': 'GBR', 'wales': 'GBR',
   'uruguay': 'URY', 'venezuela': 'VEN', 'vietnam': 'VNM',
   'british columbia': 'CAN',  // province, not a country, but foreign to Kyle
+};
+
+// ISO 3166-1 alpha-2 codes → alpha-3 (foreign only; US/MA excluded)
+// Used to detect trailing 2-letter country codes in GameJobs.co locations
+// e.g. "Stockholm 118 63 SE" → se → SWE
+const ISO2_FOREIGN_CODES = {
+  'ar': 'ARG', 'at': 'AUT', 'au': 'AUS', 'be': 'BEL', 'br': 'BRA',
+  'by': 'BLR', 'ca': 'CAN', 'ch': 'CHE', 'cn': 'CHN', 'co': 'COL',
+  'cz': 'CZE', 'de': 'DEU', 'dk': 'DNK', 'ee': 'EST', 'es': 'ESP',
+  'fi': 'FIN', 'fr': 'FRA', 'gb': 'GBR', 'gr': 'GRC', 'hu': 'HUN',
+  'id': 'IDN', 'ie': 'IRL', 'il': 'ISR', 'in': 'IND', 'it': 'ITA',
+  'jp': 'JPN', 'kr': 'KOR', 'lt': 'LTU', 'lv': 'LVA', 'mx': 'MEX',
+  'nl': 'NLD', 'no': 'NOR', 'nz': 'NZL', 'ph': 'PHL', 'pk': 'PAK',
+  'pl': 'POL', 'pt': 'PRT', 'ro': 'ROU', 'ru': 'RUS', 'se': 'SWE',
+  'sg': 'SGP', 'sk': 'SVK', 'th': 'THA', 'tr': 'TUR', 'tw': 'TWN',
+  'ua': 'UKR', 'uk': 'GBR', 'vn': 'VNM', 'za': 'ZAF',
 };
 
 const MA_INDICATORS = ['massachusetts', ' ma', 'boston', 'lexington', 'cambridge',
