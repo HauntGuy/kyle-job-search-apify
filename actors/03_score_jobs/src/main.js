@@ -917,6 +917,7 @@ async function buildScoredXlsx(jobs, {
   scoringFormatVersion = null,
   rubricVersion = null,
   isAcceptedSheet = false,
+  runNumber = null,
 } = {}) {
   const workbook = new ExcelJS.Workbook();
   const ws = workbook.addWorksheet('Jobs');
@@ -955,6 +956,13 @@ async function buildScoredXlsx(jobs, {
     ws.getColumn(i + 1).width = colDefs[i].width;
   }
 
+  // Run number row (accepted.xlsx only — bold, large font)
+  const hasRunRow = isAcceptedSheet && runNumber != null;
+  if (hasRunRow) {
+    const runRow = ws.addRow([`Run: ${runNumber}`]);
+    runRow.font = { bold: true, size: 16 };
+  }
+
   // Metadata row (scored.xlsx only — when version info is provided)
   const hasMetaRow = !!(scoringFormatVersion || rubricVersion);
   if (hasMetaRow) {
@@ -970,7 +978,8 @@ async function buildScoredXlsx(jobs, {
   headerRow.font = { bold: true };
 
   // Freeze pane: freeze header row + first 2 columns
-  const freezeYSplit = hasMetaRow ? 2 : 1;
+  const topRows = (hasRunRow ? 1 : 0) + (hasMetaRow ? 1 : 0) + 1; // run + meta + header
+  const freezeYSplit = topRows;
   ws.views = [{ state: 'frozen', xSplit: 2, ySplit: freezeYSplit }];
 
   // Pre-compute column indices for hyperlinks
@@ -1057,6 +1066,13 @@ Actor.main(async () => {
   const mergedDataset = await Actor.openDataset(mergedDatasetName);
   const scoredDataset = await Actor.openDataset(scoredDatasetName);
   const acceptedDataset = await Actor.openDataset(acceptedDatasetName);
+
+  // Read run number from pipeline metadata (set by orchestrator)
+  let runNumber = null;
+  try {
+    const runMeta = await kv.getValue('run_meta.json');
+    if (runMeta?.runNumber) runNumber = runMeta.runNumber;
+  } catch { /* ignore — run number is optional metadata */ }
 
   const startedAt = nowIso();
 
@@ -1591,7 +1607,7 @@ Actor.main(async () => {
 
   // Sort accepted jobs by score descending so best matches appear first
   const acceptedSorted = [...acceptedJobs].sort((a, b) => (b.evaluation?.score ?? 0) - (a.evaluation?.score ?? 0));
-  const acceptedXlsx = await buildScoredXlsx(acceptedSorted, { isAcceptedSheet: true });
+  const acceptedXlsx = await buildScoredXlsx(acceptedSorted, { isAcceptedSheet: true, runNumber });
   await kv.setValue('accepted.xlsx', acceptedXlsx, { contentType: xlsxContentType });
 
   // scored.xlsx contains ALL scored jobs (accepted + rejected) for review
