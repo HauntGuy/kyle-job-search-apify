@@ -881,7 +881,6 @@ async function runGameJobsCo(source, kv) {
   }
 
   // Consistent browser fingerprint for this source run (avoids Chrome UA + Firefox TLS mismatch)
-  const sessionToken = `gamejobs-${Date.now()}`;
   const headerGenOpts = {
     browsers: [{ name: 'chrome', minVersion: 120 }],
     devices: ['desktop'],
@@ -894,7 +893,6 @@ async function runGameJobsCo(source, kv) {
       url,
       responseType: 'text',
       timeout: { request: 30000 },
-      sessionToken,
       headerGeneratorOptions: headerGenOpts,
     };
     if (proxyConfig) {
