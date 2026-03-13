@@ -859,7 +859,10 @@ function stripHtmlTags(html) {
     .trim();
 }
 
-async function runGameJobsCo(source) {
+const GAMEJOBS_CACHE_TTL_DAYS = 30;
+const GAMEJOBS_CACHE_KEY = 'gamejobs_detail_cache.json';
+
+async function runGameJobsCo(source, kv) {
   const query = String(source.query || '').trim();
   if (!query) throw new Error(`[${source.id}] Missing source.query`);
 
@@ -958,15 +961,57 @@ async function runGameJobsCo(source) {
     log.info(`[${source.id}] Deduplicated: ${allEntries.length} → ${uniqueEntries.length}`);
   }
 
+  // Load detail cache from KV store
+  let detailCache = {};
+  if (kv) {
+    try {
+      const rawCache = await kv.getValue(GAMEJOBS_CACHE_KEY);
+      if (rawCache && typeof rawCache === 'object') {
+        const cutoff = Date.now() - GAMEJOBS_CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
+        for (const [url, entry] of Object.entries(rawCache)) {
+          if (entry?.fetchedAt && new Date(entry.fetchedAt).getTime() >= cutoff) {
+            detailCache[url] = entry;
+          }
+        }
+        const pruned = Object.keys(rawCache).length - Object.keys(detailCache).length;
+        if (pruned > 0) log.info(`[${source.id}] Detail cache: pruned ${pruned} expired entries (TTL ${GAMEJOBS_CACHE_TTL_DAYS}d).`);
+        log.info(`[${source.id}] Detail cache loaded: ${Object.keys(detailCache).length} entries.`);
+      }
+    } catch (err) {
+      log.warning(`[${source.id}] Failed to load detail cache: ${err?.message || err}`);
+    }
+  }
+
   // Fetch detail pages if enabled
   let detailsFetched = 0;
   let detailsFailed = 0;
+  let detailsCached = 0;
 
   if (fetchDetails && uniqueEntries.length > 0) {
     log.info(`[${source.id}] Fetching ${uniqueEntries.length} detail pages (${detailDelayMs}ms delay)...`);
 
     for (let i = 0; i < uniqueEntries.length; i++) {
       const entry = uniqueEntries[i];
+      const cacheKey = entry.url.toLowerCase();
+
+      // Check cache first
+      const cached = detailCache[cacheKey];
+      if (cached) {
+        if (cached.title) entry.title = cached.title;
+        if (cached.company) entry.company = cached.company;
+        if (cached.companyUrl) entry.companyUrl = cached.companyUrl;
+        if (cached.location) entry.location = cached.location;
+        if (cached.applyUrl) entry.applyUrl = cached.applyUrl;
+        if (cached.description) entry.description = cached.description;
+        if (cached.salary) entry.salary = cached.salary;
+        if (cached.employmentType) entry.employmentType = cached.employmentType;
+        if (cached.postedAt) entry.postedAt = cached.postedAt;
+        if (cached.jobId) entry.id = cached.jobId;
+        detailsCached++;
+        continue;
+      }
+
+      // Fetch from site
       try {
         const html = await withRetries(
           () => fetchHtmlRetryable(entry.url),
@@ -986,6 +1031,12 @@ async function runGameJobsCo(source) {
         if (detail.postedAt) entry.postedAt = detail.postedAt;
         if (detail.jobId) entry.id = detail.jobId;
 
+        // Save to cache
+        detailCache[cacheKey] = {
+          ...detail,
+          fetchedAt: new Date().toISOString(),
+        };
+
         detailsFetched++;
       } catch (err) {
         log.warning(`[${source.id}] Detail page failed (${i + 1}/${uniqueEntries.length}): ${entry.url} — ${err.message}`);
@@ -999,11 +1050,21 @@ async function runGameJobsCo(source) {
 
       // Progress log every 25 pages
       if ((i + 1) % 25 === 0) {
-        log.info(`[${source.id}] Detail progress: ${i + 1}/${uniqueEntries.length} (${detailsFetched} ok, ${detailsFailed} failed)`);
+        log.info(`[${source.id}] Detail progress: ${i + 1}/${uniqueEntries.length} (${detailsFetched} fetched, ${detailsCached} cached, ${detailsFailed} failed)`);
       }
     }
 
-    log.info(`[${source.id}] Detail pages: ${detailsFetched} fetched, ${detailsFailed} failed`);
+    log.info(`[${source.id}] Detail pages: ${detailsFetched} fetched, ${detailsCached} cached, ${detailsFailed} failed`);
+  }
+
+  // Save detail cache back to KV store
+  if (kv && (detailsFetched > 0 || Object.keys(detailCache).length > 0)) {
+    try {
+      await kv.setValue(GAMEJOBS_CACHE_KEY, detailCache);
+      log.info(`[${source.id}] Detail cache saved: ${Object.keys(detailCache).length} entries.`);
+    } catch (err) {
+      log.warning(`[${source.id}] Failed to save detail cache: ${err?.message || err}`);
+    }
   }
 
   const hitCap = pagesFetched >= maxPages && lastPageHadEntries;
@@ -1016,6 +1077,7 @@ async function runGameJobsCo(source) {
       maxPages,
       hitCap,
       detailsFetched,
+      detailsCached,
       detailsFailed,
     },
   };
@@ -1023,7 +1085,7 @@ async function runGameJobsCo(source) {
 
 // --------------- Source dispatcher ---------------
 
-async function runSource(source, config, remaining) {
+async function runSource(source, config, remaining, kv) {
   const globalMax = Number(config?.run?.maxItemsPerSource || 300) || 300;
   const type = String(source.type || '').toLowerCase();
 
@@ -1033,7 +1095,7 @@ async function runSource(source, config, remaining) {
   if (type === 'gracklehq') return await runGrackleHQ(source);
   if (type === 'builtin') return await runBuiltIn(source);
   if (type === 'usajobs') return await runUSAJobs(source);
-  if (type === 'gamejobs_co') return await runGameJobsCo(source);
+  if (type === 'gamejobs_co') return await runGameJobsCo(source, kv);
 
   throw new Error(`[${source.id}] Unknown source.type=${source.type}`);
 }
@@ -1065,7 +1127,7 @@ function jobIdPrefix(sourceId) {
   if (s.startsWith('builtin_')) return 'B';
   if (s.startsWith('usajobs_')) return 'U';
   if (s === 'gracklehq') return 'G';
-  if (s.startsWith('gamejobs_co')) return 'GJ';
+  if (s.startsWith('gamejobs_co')) return 'J';
   return '?';
 }
 
@@ -1182,7 +1244,7 @@ Actor.main(async () => {
     const started = Date.now();
     try {
       const remaining = Math.max(0, maxTotal - allJobs.length);
-      const { jobs, meta } = await runSource(source, config, remaining);
+      const { jobs, meta } = await runSource(source, config, remaining, kv);
 
       const remaining2 = Math.max(0, maxTotal - allJobs.length);
       const trimmed = remaining2 > 0 ? jobs.slice(0, remaining2) : [];
