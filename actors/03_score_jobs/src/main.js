@@ -280,7 +280,7 @@ function truncate(s, maxChars) {
 
 // --------------- Score cache helpers ---------------
 
-const SCORING_FORMAT_VERSION = 'v8'; // v8: Remote + foreign → 'unknown' (let LLM decide; Kyle is open to foreign remote work)
+const SCORING_FORMAT_VERSION = 'v9'; // v9: Remote → always 'yes' regardless of foreign status (location is just informational for remote jobs)
 
 function extractRubricVersion(rubricText) {
   const match = String(rubricText || '').match(/^#\s+Rubric:.*?\((v\d+)\)/i);
@@ -358,25 +358,22 @@ const COMMUTABLE_TOWNS = new Set([
  *
  * Remote jobs are NEVER disqualified by location — location is just informational.
  * Kyle can work any remote job regardless of where the company is based.
+ * Location on Remote jobs is purely informational — it never disqualifies.
  */
 function computeLocationOk(job) {
   const wm = String(job.workMode || '');
   const loc = String(job.location || '').trim();
 
+  // Remote → always yes, regardless of location or foreign status.
+  // Kyle is happy to work remotely for companies anywhere in the world.
+  if (wm === 'Remote') return 'yes';
+
   // No location at all → unknown
-  if (!loc) return wm === 'Remote' ? 'yes' : 'unknown';
+  if (!loc) return 'unknown';
 
   // Foreign location handling (flag set by collector using library-backed city data)
-  if (job.foreign) {
-    // Remote + foreign → let LLM decide. Kyle is open to working remotely for foreign
-    // companies. The LLM can check if the listing restricts to local applicants.
-    if (wm === 'Remote') return 'unknown';
-    // On-Site/Hybrid/blank + foreign → definitely can't commute
-    return 'no';
-  }
-
-  // Remote + US/domestic location → always yes
-  if (wm === 'Remote') return 'yes';
+  // Only applies to non-Remote jobs (On-Site, Hybrid, blank workMode)
+  if (job.foreign) return 'no';
 
   // Check for MA location
   if (/\bMA\b/.test(loc)) {
