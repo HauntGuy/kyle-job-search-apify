@@ -280,7 +280,7 @@ function truncate(s, maxChars) {
 
 // --------------- Score cache helpers ---------------
 
-const SCORING_FORMAT_VERSION = 'v4'; // v4: RemoteOnly+foreign → 'no' (not unknown), country names + regions in KNOWN_FOREIGN_PLACES
+const SCORING_FORMAT_VERSION = 'v5'; // v5: RemoteOK/RemoteOnly merged → 'Remote'. Remote jobs never disqualified by location.
 
 function extractRubricVersion(rubricText) {
   const match = String(rubricText || '').match(/^#\s+Rubric:.*?\((v\d+)\)/i);
@@ -353,27 +353,19 @@ const COMMUTABLE_TOWNS = new Set([
 
 /**
  * Determine if a job's location is acceptable, using pre-normalized fields.
- * job.workMode: 'RemoteOK' | 'RemoteOnly' | 'Hybrid' | 'On-Site' | ''
+ * job.workMode: 'Remote' | 'Hybrid' | 'On-Site' | ''
  * job.location: normalized geography (e.g., 'Boston MA', 'DEU', 'USA', '')
+ *
+ * Remote jobs are NEVER disqualified by location — location is just informational.
+ * Kyle can work any remote job regardless of where the company is based.
  */
 function computeLocationOk(job) {
   const wm = String(job.workMode || '');
   const loc = String(job.location || '').trim();
 
-  // RemoteOnly — acceptable only if location is US-based or empty.
-  // Foreign RemoteOnly (e.g., "RemoteOnly | FRA") means remote within that country/region — not US-accessible.
-  // European/Asian companies saying "Remote" virtually never hire US-based workers (tax/employment law).
-  if (wm === 'RemoteOnly') {
-    if (isForeign(loc)) return 'no'; // Remote + foreign → not US-accessible
-    return 'yes'; // Remote + US or empty → fine
-  }
-
-  // RemoteOK → acceptable if the location is US-based (even if not MA)
-  // Foreign RemoteOK is ambiguous — let LLM decide
-  if (wm === 'RemoteOK') {
-    if (isForeign(loc)) return 'unknown'; // Remote + foreign → LLM decides
-    return 'yes'; // Remote + US city → fine
-  }
+  // Remote → always acceptable, regardless of location.
+  // Location is just informational for Remote jobs.
+  if (wm === 'Remote') return 'yes';
 
   // No location at all → unknown
   if (!loc) return 'unknown';
@@ -548,8 +540,8 @@ function detectPositionType(job) {
 
 function enrichRemoteStatus(job) {
   const wm = String(job.workMode || '');
-  // Already has a remote-related work mode from collector normalization
-  if (wm === 'RemoteOK' || wm === 'RemoteOnly') return;
+  // Already has remote work mode from collector normalization
+  if (wm === 'Remote') return;
 
   let isRemote = false;
 
@@ -568,14 +560,7 @@ function enrichRemoteStatus(job) {
   }
 
   if (isRemote) {
-    const loc = String(job.location || '');
-    // Determine RemoteOK vs RemoteOnly based on whether there's a city
-    if (!loc || loc === 'USA' || (/^[A-Z]{2}$/.test(loc) && loc.length === 2) ||
-        (loc.length === 3 && /^[A-Z]{3}$/.test(loc) && loc !== 'USA')) {
-      job.workMode = 'RemoteOnly';
-    } else {
-      job.workMode = 'RemoteOK';
-    }
+    job.workMode = 'Remote';
   }
 }
 
@@ -1432,7 +1417,7 @@ Actor.main(async () => {
           '\n\n' +
           'Return ONLY valid JSON, no markdown. Ensure fields: accept, score, confidence, reason_short, reasons, red_flags, tags, salary_extracted, company_url, role, location, work_mode.\n' +
           'location: Your best determination of the job\'s geographic location (e.g., "Boston MA", "JPN", "USA"). Use the provided location as a starting point, but refine based on the description.\n' +
-          'work_mode: One of "RemoteOK", "RemoteOnly", "Hybrid", "On-Site", or "". Refine based on the description.',
+          'work_mode: One of "Remote", "Hybrid", "On-Site", or "". Refine based on the description.',
       },
       {
         role: 'user',
@@ -1453,7 +1438,10 @@ Actor.main(async () => {
       job.location = llmLocation.trim();
     }
     if (llmWorkMode && typeof llmWorkMode === 'string' && llmWorkMode.trim()) {
-      job.workMode = llmWorkMode.trim();
+      let wm = llmWorkMode.trim();
+      // Normalize legacy values the LLM might still return
+      if (wm === 'RemoteOK' || wm === 'RemoteOnly') wm = 'Remote';
+      job.workMode = wm;
     }
 
     const accepted =

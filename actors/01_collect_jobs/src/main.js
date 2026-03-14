@@ -109,7 +109,7 @@ function canonicalizeUrl(u) {
 
 // --------------- Location Normalization ---------------
 // Splits raw location strings into separate (workMode, location) fields.
-// workMode: 'RemoteOK' | 'RemoteOnly' | 'Hybrid' | 'On-Site' | ''
+// workMode: 'Remote' | 'Hybrid' | 'On-Site' | ''
 // location: normalized geography (e.g., 'Boston MA', 'DEU', 'USA', '')
 
 const STATE_NAME_TO_ABBREV = {
@@ -197,12 +197,10 @@ function _detectWorkModeRaw(raw) {
   return '';
 }
 
-function _refineRemote(geo) {
-  if (!geo) return 'RemoteOnly';
-  if (geo === 'USA') return 'RemoteOnly';
-  if (geo.length === 2 && US_STATE_ABBREVS.has(geo.toUpperCase())) return 'RemoteOnly';
-  if (geo.length === 3 && /^[A-Z]{3}$/.test(geo) && geo !== 'USA') return 'RemoteOnly';
-  return 'RemoteOK';
+function _refineRemote(_geo) {
+  // RemoteOK vs RemoteOnly distinction removed — Kyle doesn't care.
+  // If it's remote, location is just informational, never disqualifying.
+  return 'Remote';
 }
 
 function _stripWorkMode(raw) {
@@ -343,8 +341,8 @@ function _normalizeNonCommaLocation(geo) {
 
 /**
  * Normalize a raw location string into { workMode, location }.
- * workMode: 'RemoteOK' | 'RemoteOnly' | 'Hybrid' | 'On-Site' | ''
- * location: normalized geography string
+ * workMode: 'Remote' | 'Hybrid' | 'On-Site' | ''
+ * location: normalized geography string (informational for Remote jobs)
  */
 function normalizeLocationFields(rawLocation) {
   if (!rawLocation || typeof rawLocation !== 'string' || !rawLocation.trim()) {
@@ -354,7 +352,7 @@ function normalizeLocationFields(rawLocation) {
   const rawWm = _detectWorkModeRaw(raw);
   let geo = _stripWorkMode(raw);
   if (!geo) {
-    if (rawWm === 'remote') return { workMode: 'RemoteOnly', location: '' };
+    if (rawWm === 'remote') return { workMode: 'Remote', location: '' };
     if (rawWm === 'hybrid') return { workMode: 'Hybrid', location: '' };
     if (rawWm === 'onsite') return { workMode: 'On-Site', location: '' };
     return { workMode: '', location: '' };
