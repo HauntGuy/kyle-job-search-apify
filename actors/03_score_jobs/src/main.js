@@ -280,7 +280,7 @@ function truncate(s, maxChars) {
 
 // --------------- Score cache helpers ---------------
 
-const SCORING_FORMAT_VERSION = 'v6'; // v6: foreign detection moved to collector using library data (133K cities), may catch more foreign locations.
+const SCORING_FORMAT_VERSION = 'v7'; // v7: Remote + foreign → reject (European "remote" means within that country)
 
 function extractRubricVersion(rubricText) {
   const match = String(rubricText || '').match(/^#\s+Rubric:.*?\((v\d+)\)/i);
@@ -363,15 +363,19 @@ function computeLocationOk(job) {
   const wm = String(job.workMode || '');
   const loc = String(job.location || '').trim();
 
-  // Remote → always acceptable, regardless of location.
-  // Location is just informational for Remote jobs.
-  if (wm === 'Remote') return 'yes';
-
   // No location at all → unknown
-  if (!loc) return 'unknown';
+  if (!loc) return wm === 'Remote' ? 'yes' : 'unknown';
 
-  // Foreign location → not commutable (flag set by collector using library-backed city data)
-  if (job.foreign) return 'no';
+  // Foreign location handling (flag set by collector using library-backed city data)
+  if (job.foreign) {
+    // Remote + foreign = European-style "remote" (within that country). Reject.
+    // Exception: ambiguous locations like "North America" → let LLM decide.
+    if (wm === 'Remote') return 'no';
+    return 'no'; // On-Site/Hybrid/blank + foreign → definitely no
+  }
+
+  // Remote + US/domestic location → always yes
+  if (wm === 'Remote') return 'yes';
 
   // Check for MA location
   if (/\bMA\b/.test(loc)) {
