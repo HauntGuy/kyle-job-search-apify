@@ -336,8 +336,13 @@ function _normalizeNonCommaLocation(geo) {
  * Determine if a normalized location string refers to a foreign (non-US) location.
  * Uses library-backed city/country data (~133K cities) for broad coverage.
  */
+const US_DOMESTIC_NAMES = new Set(['usa', 'us', 'united states', 'united states of america']);
+
 function isForeignLocation(loc) {
   if (!loc) return false;
+
+  // US domestic codes/names → definitely not foreign
+  if (US_DOMESTIC_NAMES.has(loc.toLowerCase())) return false;
 
   // ISO3 foreign code (e.g., "FRA", "GBR")
   if (isIso3Foreign(loc)) return true;
