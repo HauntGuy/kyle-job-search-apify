@@ -280,7 +280,7 @@ function truncate(s, maxChars) {
 
 // --------------- Score cache helpers ---------------
 
-const SCORING_FORMAT_VERSION = 'v7'; // v7: Remote + foreign → reject (European "remote" means within that country)
+const SCORING_FORMAT_VERSION = 'v8'; // v8: Remote + foreign → 'unknown' (let LLM decide; Kyle is open to foreign remote work)
 
 function extractRubricVersion(rubricText) {
   const match = String(rubricText || '').match(/^#\s+Rubric:.*?\((v\d+)\)/i);
@@ -368,12 +368,11 @@ function computeLocationOk(job) {
 
   // Foreign location handling (flag set by collector using library-backed city data)
   if (job.foreign) {
-    // Contract/freelance + Remote + foreign → let LLM decide (international contracting is common)
-    const pt = String(job.positionType || '').toLowerCase();
-    if (wm === 'Remote' && (pt.includes('contract') || pt.includes('freelance'))) return 'unknown';
-    // Remote + foreign = European-style "remote" (within that country). Reject.
-    if (wm === 'Remote') return 'no';
-    return 'no'; // On-Site/Hybrid/blank + foreign → definitely no
+    // Remote + foreign → let LLM decide. Kyle is open to working remotely for foreign
+    // companies. The LLM can check if the listing restricts to local applicants.
+    if (wm === 'Remote') return 'unknown';
+    // On-Site/Hybrid/blank + foreign → definitely can't commute
+    return 'no';
   }
 
   // Remote + US/domestic location → always yes
