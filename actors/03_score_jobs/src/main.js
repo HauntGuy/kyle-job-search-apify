@@ -474,6 +474,59 @@ function enrichRemoteStatus(job) {
 const BUILTIN_DESC_CACHE_TTL_DAYS = 30;
 const BUILTIN_FETCH_DELAY_MS = 3000;
 
+// --------------- LinkedIn Detail Enrichment (via bestscrapers actor) ---------------
+
+const LINKEDIN_DETAIL_CACHE_TTL_DAYS = 30;
+const LINKEDIN_DETAIL_ACTOR_ID = 'aQNKZRc1yXowQlLKL';
+const LINKEDIN_DETAIL_WAIT_SECS = 60;
+const LINKEDIN_DETAIL_DELAY_MS = 1000; // delay between calls to avoid hammering
+
+/**
+ * Extract the numeric LinkedIn job ID from a URL like
+ * "https://www.linkedin.com/jobs/view/game-designer-at-foo-4380262477"
+ * or from a raw job ID field.
+ */
+function extractLinkedInJobId(job) {
+  // Try the url field first
+  for (const u of [job.url, job.applyUrl, job.linkedinUrl]) {
+    if (!u) continue;
+    const m = String(u).match(/jobs\/view\/(?:.*?[-/])?(\d{8,})/);
+    if (m) return m[1];
+  }
+  // Try job.id — LinkedIn IDs from Fantastic are like "L-4380262477"
+  const rawId = String(job.id || '');
+  const m2 = rawId.match(/(\d{8,})/);
+  if (m2) return m2[1];
+  return null;
+}
+
+/**
+ * Call the bestscrapers/linkedin-job-details-scraper for a single job URL.
+ * Returns the .data object from the scraper output, or null on failure.
+ */
+async function fetchLinkedInDetail(jobId, apifyToken) {
+  const jobUrl = `https://www.linkedin.com/jobs/view/${jobId}`;
+  const runUrl = `https://api.apify.com/v2/acts/${LINKEDIN_DETAIL_ACTOR_ID}/runs?token=${apifyToken}&waitForFinish=${LINKEDIN_DETAIL_WAIT_SECS}`;
+  const res = await fetch(runUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ job_url: jobUrl }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`bestscrapers run failed (HTTP ${res.status}): ${text.slice(0, 300)}`);
+  }
+  const run = await res.json();
+  const datasetId = run?.data?.defaultDatasetId;
+  if (!datasetId) throw new Error('bestscrapers run returned no datasetId');
+
+  const itemsUrl = `https://api.apify.com/v2/datasets/${datasetId}/items?token=${apifyToken}`;
+  const itemsRes = await fetch(itemsUrl);
+  if (!itemsRes.ok) throw new Error(`Dataset fetch failed (HTTP ${itemsRes.status})`);
+  const items = await itemsRes.json();
+  return items?.[0]?.data || null;
+}
+
 /**
  * Strip HTML tags from a string and produce clean plain text.
  */
@@ -1208,6 +1261,116 @@ Actor.main(async () => {
     log.warning(`Failed to save Built In desc cache: ${err?.message || err}`);
   }
 
+  // --- LinkedIn detail enrichment (fetch workMode for LinkedIn jobs missing it) ---
+  // Uses bestscrapers/linkedin-job-details-scraper to get remote_allow, job_type, salary
+  // that the Fantastic scraper doesn't reliably provide.
+  const linkedinEnrichment = { total: 0, cached: 0, fetched: 0, failed: 0, remoteFound: 0 };
+  const apifyToken = process.env.APIFY_TOKEN;
+
+  // Load LinkedIn detail cache from KV store
+  let linkedinDetailCache = {};
+  try {
+    const rawCache = await kv.getValue('linkedin_detail_cache.json');
+    if (rawCache && typeof rawCache === 'object') {
+      const cutoff = Date.now() - LINKEDIN_DETAIL_CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
+      for (const [jobId, entry] of Object.entries(rawCache)) {
+        if (entry?.fetchedAt && new Date(entry.fetchedAt).getTime() >= cutoff) {
+          linkedinDetailCache[jobId] = entry;
+        }
+      }
+      const pruned = Object.keys(rawCache).length - Object.keys(linkedinDetailCache).length;
+      if (pruned > 0) log.info(`LinkedIn detail cache: pruned ${pruned} expired entries (TTL ${LINKEDIN_DETAIL_CACHE_TTL_DAYS}d).`);
+      log.info(`LinkedIn detail cache loaded: ${Object.keys(linkedinDetailCache).length} entries.`);
+    }
+  } catch (err) {
+    log.warning(`Failed to load LinkedIn detail cache: ${err?.message || err}`);
+  }
+
+  // Identify LinkedIn jobs that pass all pre-filters and have blank workMode
+  const linkedinJobsToEnrich = [];
+  for (let i = 0; i < mergedJobs.length; i++) {
+    const job = mergedJobs[i];
+    if (preLocationMap.get(i) === 'no') continue;
+    if (titleDisqualifyReason(job.title || '')) continue;
+    if (preExpiredSet.has(i)) continue;
+    if (job.workMode) continue; // already has workMode — no need
+    const sources = Array.isArray(job.sources) ? job.sources : [job.source].filter(Boolean);
+    if (!sources.some(s => /^(linkedin_|fantastic_)/.test(String(s)))) continue;
+    const linkedinJobId = extractLinkedInJobId(job);
+    if (!linkedinJobId) continue;
+    linkedinJobsToEnrich.push({ job, index: i, linkedinJobId });
+  }
+
+  linkedinEnrichment.total = linkedinJobsToEnrich.length;
+  if (linkedinJobsToEnrich.length > 0 && apifyToken) {
+    log.info(`LinkedIn detail enrichment: ${linkedinJobsToEnrich.length} jobs need workMode lookup.`);
+
+    for (const { job, index, linkedinJobId } of linkedinJobsToEnrich) {
+      // Check cache first
+      const cached = linkedinDetailCache[linkedinJobId];
+      if (cached) {
+        if (cached.remote_allow) {
+          job.workMode = 'Remote';
+          preLocationMap.set(index, computeLocationOk(job));
+          linkedinEnrichment.remoteFound++;
+        }
+        if (cached.job_type && !job.employmentType) {
+          job.employmentType = cached.job_type;
+        }
+        if (cached.salary && !job.salary) {
+          job.salary = cached.salary;
+        }
+        linkedinEnrichment.cached++;
+        continue;
+      }
+
+      // Call the bestscrapers actor
+      try {
+        const detail = await fetchLinkedInDetail(linkedinJobId, apifyToken);
+        if (detail) {
+          linkedinDetailCache[linkedinJobId] = {
+            remote_allow: !!detail.remote_allow,
+            job_type: detail.job_type || '',
+            salary: detail.salary_display || '',
+            fetchedAt: nowIso(),
+          };
+          if (detail.remote_allow) {
+            job.workMode = 'Remote';
+            preLocationMap.set(index, computeLocationOk(job));
+            linkedinEnrichment.remoteFound++;
+          }
+          if (detail.job_type && !job.employmentType) {
+            job.employmentType = detail.job_type;
+          }
+          if (detail.salary_display && !job.salary) {
+            job.salary = detail.salary_display;
+          }
+          linkedinEnrichment.fetched++;
+          log.info(`LinkedIn enriched: "${job.title}" at ${job.company} → remote_allow=${detail.remote_allow}, job_type=${detail.job_type || '(none)'}`);
+        } else {
+          linkedinEnrichment.failed++;
+          log.warning(`LinkedIn detail: no data returned for "${job.title}" at ${job.company} (job ${linkedinJobId})`);
+        }
+      } catch (err) {
+        linkedinEnrichment.failed++;
+        log.warning(`LinkedIn detail failed for "${job.title}" at ${job.company} (job ${linkedinJobId}): ${err?.message || err}`);
+      }
+
+      await sleep(LINKEDIN_DETAIL_DELAY_MS);
+    }
+
+    log.info(`LinkedIn detail enrichment done: ${linkedinEnrichment.fetched} fetched, ${linkedinEnrichment.cached} cached, ${linkedinEnrichment.failed} failed, ${linkedinEnrichment.remoteFound} found to be Remote.`);
+  } else if (linkedinJobsToEnrich.length > 0 && !apifyToken) {
+    log.warning(`LinkedIn detail enrichment skipped: APIFY_TOKEN not available (${linkedinJobsToEnrich.length} jobs would benefit).`);
+  }
+
+  // Save LinkedIn detail cache
+  try {
+    await kv.setValue('linkedin_detail_cache.json', linkedinDetailCache);
+  } catch (err) {
+    log.warning(`Failed to save LinkedIn detail cache: ${err?.message || err}`);
+  }
+
   // --- Scoring helper (reused for initial pass and re-score passes) ---
   async function scoreOneJob(job, idx) {
     // --- Pre-filter gates run BEFORE cache check ---
@@ -1581,6 +1744,13 @@ Actor.main(async () => {
       cached: builtInEnrichment.cached,
       fetched: builtInEnrichment.fetched,
       failed: builtInEnrichment.failed,
+    },
+    linkedinDetailEnrichment: {
+      total: linkedinEnrichment.total,
+      cached: linkedinEnrichment.cached,
+      fetched: linkedinEnrichment.fetched,
+      failed: linkedinEnrichment.failed,
+      remoteFound: linkedinEnrichment.remoteFound,
     },
     threshold,
     gateOnLocation,
