@@ -78,6 +78,12 @@ function requireEnvs(required = []) {
 function firstString(...vals) {
   for (const v of vals) {
     if (typeof v === 'string' && v.trim()) return v.trim();
+    // Handle arrays (e.g., LinkedIn employment_type: ['CONTRACTOR'])
+    if (Array.isArray(v)) {
+      for (const item of v) {
+        if (typeof item === 'string' && item.trim()) return item.trim();
+      }
+    }
   }
   return '';
 }
@@ -467,8 +473,14 @@ function normalizeFantasticFeed(sourceId, raw) {
   const locationsDerived = asArray(raw.locations_derived).filter(Boolean);
   const locationsRaw = asArray(raw.locations_raw).filter(Boolean);
 
-  const remote = !!raw.remote_derived || (typeof raw.work_arrangement_derived === 'string' && raw.work_arrangement_derived.toLowerCase().includes('remote'));
-  const hybrid = !!raw.hybrid_derived || (typeof raw.work_arrangement_derived === 'string' && raw.work_arrangement_derived.toLowerCase().includes('hybrid'));
+  // Check multiple sources for remote/hybrid status — remote_derived is unreliable for LinkedIn jobs.
+  // LinkedIn's "Remote" bubble maps to location_type='TELECOMMUTE' in structured data,
+  // but the scraper doesn't always populate remote_derived from it.
+  const aiWA = String(raw.ai_work_arrangement || '').toLowerCase();
+  const waD = String(raw.work_arrangement_derived || '').toLowerCase();
+  const locType = String(raw.location_type || '').toLowerCase();
+  const remote = !!raw.remote_derived || waD.includes('remote') || aiWA.includes('remote') || locType === 'telecommute';
+  const hybrid = !!raw.hybrid_derived || waD.includes('hybrid') || aiWA.includes('hybrid');
 
   const locParts = [];
   if (remote) locParts.push('Remote');
@@ -479,7 +491,17 @@ function normalizeFantasticFeed(sourceId, raw) {
 
   const description = firstString(raw.description_text, raw.description, raw.description_html);
   const postedAt = firstString(raw.date_posted, raw.posted_at, raw.postedAt, raw.updated_at, raw.updatedAt);
-  const salary = firstString(raw.salary_range_derived, raw.salary_range, raw.salary);
+  let salary = firstString(raw.salary_range_derived, raw.salary_range, raw.salary);
+  // Fallback: build salary string from AI-derived min/max (LinkedIn enrichment)
+  if (!salary && raw.ai_salary_minvalue && raw.ai_salary_maxvalue) {
+    const unit = String(raw.ai_salary_unittext || '').toUpperCase();
+    const cur = String(raw.ai_salary_currency || 'USD');
+    const fmt = (n) => {
+      if (n >= 1000) return `${cur === 'USD' ? '$' : cur + ' '}${Math.round(n / 1000)}K`;
+      return `${cur === 'USD' ? '$' : cur + ' '}${n}`;
+    };
+    salary = `${fmt(raw.ai_salary_minvalue)} - ${fmt(raw.ai_salary_maxvalue)}${unit === 'HOUR' ? '/hr' : unit === 'YEAR' ? '/yr' : ''}`;
+  }
   const employmentType = firstString(raw.employment_type_derived, raw.employment_type);
 
   const out = {
