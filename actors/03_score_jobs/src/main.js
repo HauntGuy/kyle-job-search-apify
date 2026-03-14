@@ -280,7 +280,7 @@ function truncate(s, maxChars) {
 
 // --------------- Score cache helpers ---------------
 
-const SCORING_FORMAT_VERSION = 'v3'; // v3: isForeign() catches foreign cities/ISO2, RemoteOnly+foreign → unknown
+const SCORING_FORMAT_VERSION = 'v4'; // v4: RemoteOnly+foreign → 'no' (not unknown), country names + regions in KNOWN_FOREIGN_PLACES
 
 function extractRubricVersion(rubricText) {
   const match = String(rubricText || '').match(/^#\s+Rubric:.*?\((v\d+)\)/i);
@@ -361,9 +361,10 @@ function computeLocationOk(job) {
   const loc = String(job.location || '').trim();
 
   // RemoteOnly — acceptable only if location is US-based or empty.
-  // Foreign RemoteOnly (e.g., "RemoteOnly | FRA") likely means remote within that country, not US.
+  // Foreign RemoteOnly (e.g., "RemoteOnly | FRA") means remote within that country/region — not US-accessible.
+  // European/Asian companies saying "Remote" virtually never hire US-based workers (tax/employment law).
   if (wm === 'RemoteOnly') {
-    if (isForeign(loc)) return 'unknown'; // Remote + foreign → LLM decides
+    if (isForeign(loc)) return 'no'; // Remote + foreign → not US-accessible
     return 'yes'; // Remote + US or empty → fine
   }
 
@@ -424,7 +425,8 @@ const ISO3_FOREIGN_CODES = new Set([
   'TKM','UGA','UKR','ARE','GBR','URY','UZB','VEN','VNM','YEM','ZMB','ZWE',
 ]);
 
-const KNOWN_FOREIGN_CITIES = new Set([
+const KNOWN_FOREIGN_PLACES = new Set([
+  // Cities
   'amsterdam','athens','bangkok','barcelona','beijing','belfast','berlin','bogota','brussels',
   'bucharest','budapest','buenos aires','cairo','cambridge uk','cape town','copenhagen','cork',
   'delhi','dublin','dubai','edinburgh','frankfurt','geneva','gothenburg','guadalajara','hamburg',
@@ -434,6 +436,25 @@ const KNOWN_FOREIGN_CITIES = new Set([
   'nicosia','oslo','oxford','paris','prague','riga','rio de janeiro','riyadh','rome','santiago',
   'sao paulo','seoul','shanghai','singapore','sofia','stockholm','sydney','taipei','tallinn',
   'tbilisi','tel aviv','tokyo','toronto','vancouver','vienna','vilnius','warsaw','zurich',
+  // Country names (catches locations like "Portugal", "Romania", "Turkey" that aren't ISO3)
+  'afghanistan','albania','algeria','andorra','angola','argentina','armenia','australia','austria',
+  'azerbaijan','bahrain','bangladesh','belarus','belgium','bolivia','brazil','brunei','bulgaria',
+  'cambodia','cameroon','canada','chile','china','colombia','costa rica','croatia','cuba','cyprus',
+  'czech republic','czechia','denmark','dominican republic','ecuador','egypt','el salvador','estonia',
+  'ethiopia','fiji','finland','france','gabon','georgia','germany','ghana','greece','guatemala',
+  'honduras','hungary','iceland','india','indonesia','iran','iraq','ireland','israel','italy',
+  'jamaica','japan','jordan','kazakhstan','kenya','kuwait','latvia','lebanon','libya','lithuania',
+  'luxembourg','malaysia','malta','mexico','moldova','mongolia','montenegro','morocco','mozambique',
+  'myanmar','nepal','netherlands','new zealand','nicaragua','nigeria','north macedonia','norway',
+  'oman','pakistan','panama','paraguay','peru','philippines','poland','portugal','qatar','romania',
+  'russia','saudi arabia','senegal','serbia','singapore','slovakia','slovenia','south africa',
+  'south korea','spain','sri lanka','sudan','sweden','switzerland','syria','taiwan','tanzania',
+  'thailand','tunisia','turkey','turkmenistan','uganda','ukraine','united arab emirates',
+  'united kingdom','uruguay','uzbekistan','venezuela','vietnam','yemen','zambia','zimbabwe',
+  // Regions (note: 'north america' deliberately excluded — ambiguous, could include US)
+  'south america','latin america','europe','asia','africa','middle east',
+  'southeast asia','east asia','south asia','central asia','central america','oceania',
+  'eastern europe','western europe','emea','apac','latam',
 ]);
 
 // ISO2 country codes (foreign only — excludes US)
@@ -473,14 +494,11 @@ function isForeign(loc) {
     if (ISO2_FOREIGN.has(code) && !US_STATES_2.has(code)) return true;
   }
 
-  // Known foreign city name (e.g., "Istanbul", "Vancouver", "Warsaw")
-  if (KNOWN_FOREIGN_CITIES.has(loc.toLowerCase())) return true;
+  // Known foreign city, country, or region name (e.g., "Istanbul", "Portugal", "North America")
+  if (KNOWN_FOREIGN_PLACES.has(loc.toLowerCase())) return true;
 
   // "Remote CET" or timezone-based locations suggesting Europe
   if (/\bCET\b|\bGMT[+-]\d/.test(loc)) return true;
-
-  // Region names that are foreign (North America is ambiguous — could include Canada — let LLM decide via 'unknown')
-  if (/\b(Eastern Europe|Western Europe|EMEA|APAC|LATAM)\b/i.test(loc)) return true;
 
   return false;
 }
