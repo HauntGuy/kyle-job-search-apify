@@ -280,7 +280,7 @@ function truncate(s, maxChars) {
 
 // --------------- Score cache helpers ---------------
 
-const SCORING_FORMAT_VERSION = 'v2'; // v2: separate workMode/location fields, location in LLM prompt
+const SCORING_FORMAT_VERSION = 'v3'; // v3: isForeign() catches foreign cities/ISO2, RemoteOnly+foreign → unknown
 
 function extractRubricVersion(rubricText) {
   const match = String(rubricText || '').match(/^#\s+Rubric:.*?\((v\d+)\)/i);
@@ -360,21 +360,25 @@ function computeLocationOk(job) {
   const wm = String(job.workMode || '');
   const loc = String(job.location || '').trim();
 
-  // RemoteOnly (anywhere) → always acceptable
-  if (wm === 'RemoteOnly') return 'yes';
+  // RemoteOnly — acceptable only if location is US-based or empty.
+  // Foreign RemoteOnly (e.g., "RemoteOnly | FRA") likely means remote within that country, not US.
+  if (wm === 'RemoteOnly') {
+    if (isForeign(loc)) return 'unknown'; // Remote + foreign → LLM decides
+    return 'yes'; // Remote + US or empty → fine
+  }
 
   // RemoteOK → acceptable if the location is US-based (even if not MA)
   // Foreign RemoteOK is ambiguous — let LLM decide
   if (wm === 'RemoteOK') {
-    if (isForeignIso3(loc)) return 'unknown'; // Remote + foreign → LLM decides
+    if (isForeign(loc)) return 'unknown'; // Remote + foreign → LLM decides
     return 'yes'; // Remote + US city → fine
   }
 
   // No location at all → unknown
   if (!loc) return 'unknown';
 
-  // Foreign country (ISO3 code like "DEU", "JPN") → not commutable
-  if (isForeignIso3(loc)) return 'no';
+  // Foreign location → not commutable
+  if (isForeign(loc)) return 'no';
 
   // Check for MA location
   if (/\bMA\b/.test(loc)) {
@@ -401,8 +405,84 @@ function computeLocationOk(job) {
   return 'unknown';
 }
 
-function isForeignIso3(loc) {
-  return loc.length === 3 && /^[A-Z]{3}$/.test(loc) && loc !== 'USA';
+/**
+ * Broader foreign detection — catches ISO3 codes, ISO2 suffixes (e.g., "Limassol CY"),
+ * and known foreign city names that the collector couldn't resolve to ISO3.
+ */
+const ISO3_FOREIGN_CODES = new Set([
+  'AFG','ALB','DZA','AND','AGO','ARG','ARM','AUS','AUT','AZE','BHR','BGD','BLR','BEL',
+  'BLZ','BEN','BTN','BOL','BIH','BWA','BRA','BRN','BGR','BFA','BDI','KHM','CMR','CAN',
+  'CPV','CAF','TCD','CHL','CHN','COL','COM','COG','CRI','HRV','CUB','CYP','CZE','DNK',
+  'DJI','DOM','ECU','EGY','SLV','GNQ','ERI','EST','SWZ','ETH','FJI','FIN','FRA','GAB',
+  'GMB','GEO','DEU','GHA','GRC','GTM','GIN','GNB','GUY','HTI','HND','HKG','HUN','ISL',
+  'IND','IDN','IRN','IRQ','IRL','ISR','ITA','JAM','JPN','JOR','KAZ','KEN','KWT','KGZ',
+  'LAO','LVA','LBN','LSO','LBR','LBY','LIE','LTU','LUX','MDG','MWI','MYS','MDV','MLI',
+  'MLT','MRT','MUS','MEX','MDA','MNG','MNE','MAR','MOZ','MMR','NAM','NPL','NLD','NZL',
+  'NIC','NER','NGA','MKD','NOR','OMN','PAK','PAN','PNG','PRY','PER','PHL','POL','PRT',
+  'QAT','ROU','RUS','RWA','SAU','SEN','SRB','SGP','SVK','SVN','SOM','ZAF','KOR','ESP',
+  'LKA','SDN','SUR','SWE','CHE','SYR','TWN','TJK','TZA','THA','TGO','TTO','TUN','TUR',
+  'TKM','UGA','UKR','ARE','GBR','URY','UZB','VEN','VNM','YEM','ZMB','ZWE',
+]);
+
+const KNOWN_FOREIGN_CITIES = new Set([
+  'amsterdam','athens','bangkok','barcelona','beijing','belfast','berlin','bogota','brussels',
+  'bucharest','budapest','buenos aires','cairo','cambridge uk','cape town','copenhagen','cork',
+  'delhi','dublin','dubai','edinburgh','frankfurt','geneva','gothenburg','guadalajara','hamburg',
+  'helsinki','hong kong','istanbul','jakarta','johannesburg','karachi','kiev','krakow','kuala lumpur',
+  'lagos','lahore','lima','limassol','lisbon','london','lyon','madrid','malmo','manila','marseille',
+  'melbourne','mexico city','milan','montreal','moscow','mumbai','munich','nairobi','new delhi',
+  'nicosia','oslo','oxford','paris','prague','riga','rio de janeiro','riyadh','rome','santiago',
+  'sao paulo','seoul','shanghai','singapore','sofia','stockholm','sydney','taipei','tallinn',
+  'tbilisi','tel aviv','tokyo','toronto','vancouver','vienna','vilnius','warsaw','zurich',
+]);
+
+// ISO2 country codes (foreign only — excludes US)
+const ISO2_FOREIGN = new Set([
+  'AD','AE','AF','AG','AL','AM','AO','AR','AT','AU','AZ','BA','BB','BD','BE','BF','BG',
+  'BH','BI','BJ','BN','BO','BR','BS','BT','BW','BY','BZ','CA','CD','CF','CG','CH','CI',
+  'CL','CM','CN','CO','CR','CU','CV','CY','CZ','DE','DJ','DK','DM','DO','DZ','EC','EE',
+  'EG','ER','ES','ET','FI','FJ','FR','GA','GB','GD','GE','GH','GM','GN','GQ','GR','GT',
+  'GW','GY','HK','HN','HR','HT','HU','ID','IE','IL','IN','IQ','IR','IS','IT','JM','JO',
+  'JP','KE','KG','KH','KP','KR','KW','KZ','LA','LB','LI','LK','LR','LS','LT','LU','LV',
+  'LY','MA','MC','MD','ME','MG','MK','ML','MM','MN','MR','MT','MU','MV','MW','MX','MY',
+  'MZ','NA','NE','NG','NI','NL','NO','NP','NZ','OM','PA','PE','PG','PH','PK','PL','PT',
+  'PY','QA','RO','RS','RU','RW','SA','SB','SC','SD','SE','SG','SI','SK','SL','SN','SO',
+  'SR','SS','SV','SY','SZ','TD','TG','TH','TJ','TL','TM','TN','TR','TT','TW','TZ','UA',
+  'UG','UY','UZ','VA','VE','VN','YE','ZA','ZM','ZW',
+]);
+
+// US state abbreviations — used to disambiguate ISO2 country codes that collide with US states
+const US_STATES_2 = new Set([
+  'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY',
+  'LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND',
+  'OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC',
+]);
+
+function isForeign(loc) {
+  if (!loc) return false;
+
+  // ISO3 foreign code (e.g., "FRA", "GBR")
+  if (ISO3_FOREIGN_CODES.has(loc)) return true;
+
+  // "City ISO2" pattern (e.g., "Limassol CY", "Jakarta ID")
+  // Only used for multi-word locations — bare 2-letter codes overlap with US states (CA, DE, GA, etc.)
+  const iso2Match = loc.match(/^.+\s([A-Z]{2})$/);
+  if (iso2Match) {
+    const code = iso2Match[1];
+    // Only flag as foreign if the ISO2 code is unambiguously foreign (not a US state)
+    if (ISO2_FOREIGN.has(code) && !US_STATES_2.has(code)) return true;
+  }
+
+  // Known foreign city name (e.g., "Istanbul", "Vancouver", "Warsaw")
+  if (KNOWN_FOREIGN_CITIES.has(loc.toLowerCase())) return true;
+
+  // "Remote CET" or timezone-based locations suggesting Europe
+  if (/\bCET\b|\bGMT[+-]\d/.test(loc)) return true;
+
+  // Region names that are foreign (North America is ambiguous — could include Canada — let LLM decide via 'unknown')
+  if (/\b(Eastern Europe|Western Europe|EMEA|APAC|LATAM)\b/i.test(loc)) return true;
+
+  return false;
 }
 
 // --------------- XLSX helpers ---------------
