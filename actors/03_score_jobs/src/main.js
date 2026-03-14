@@ -829,10 +829,31 @@ async function enrichLinkedInUrls(acceptedJobs, prevLinkedinUrlCache) {
       if (!slug) { if (key) cache[key] = null; continue; }
 
       // Find a URL whose slug contains the company name after "-at-"
-      const match = urls.find((u) => {
+      // AND whose title portion (before "-at-") contains key words from the job title.
+      // LinkedIn URLs look like: /jobs/view/{title-slug}-at-{company-slug}-{id}
+      const titleWords = String(job.title || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .split(/\s+/)
+        .filter((w) => w.length > 2 && !['the', 'and', 'for', 'with'].includes(w));
+
+      // Score each URL by how many title words appear in the title portion,
+      // then pick the best match. This avoids grabbing the wrong job when a
+      // company has multiple LinkedIn postings (e.g., "Gameplay Engineer" vs
+      // "Senior Software Engineer (Fullstack)" at thatgamecompany).
+      let bestUrl = null;
+      let bestHits = 0;
+      for (const u of urls) {
         const lower = u.toLowerCase();
-        return lower.includes(`-at-${slug}-`) || lower.endsWith(`-at-${slug}`);
-      });
+        const companyMatch = lower.includes(`-at-${slug}-`) || lower.endsWith(`-at-${slug}`);
+        if (!companyMatch) continue;
+        const atIdx = lower.indexOf(`-at-${slug}`);
+        if (atIdx < 0) continue;
+        const titlePart = lower.slice(lower.lastIndexOf('/') + 1, atIdx);
+        const hits = titleWords.length === 0 ? 1 : titleWords.filter((w) => titlePart.includes(w)).length;
+        if (hits > bestHits) { bestHits = hits; bestUrl = u; }
+      }
+      const match = bestUrl;
 
       if (match) {
         const cleanUrl = match.split(/['">\s]/)[0];
