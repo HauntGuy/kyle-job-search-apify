@@ -138,19 +138,13 @@ function countryNameToIso3(name) {
   return null;
 }
 
-// ISO3 foreign codes set from library (all countries except USA)
-const _allAlpha3 = isoCountries.getAlpha3Codes();
-const ISO3_FOREIGN_CODES = new Set(Object.keys(_allAlpha3));
-ISO3_FOREIGN_CODES.delete('USA');
-
-// ISO2 → ISO3 mapping for foreign countries
-const _allAlpha2 = isoCountries.getAlpha2Codes();
-const ISO2_TO_ISO3 = {};
-for (const alpha2 of Object.keys(_allAlpha2)) {
-  const alpha3 = isoCountries.alpha2ToAlpha3(alpha2);
-  if (alpha3 && alpha3 !== 'USA') {
-    ISO2_TO_ISO3[alpha2.toLowerCase()] = alpha3;
-  }
+// Direct library helpers (no pre-built tables needed)
+function isIso3Foreign(code) {
+  return code !== 'USA' && !!isoCountries.getName(code, 'en');
+}
+function iso2ToIso3Foreign(code2) {
+  const code3 = isoCountries.alpha2ToAlpha3(code2.toUpperCase());
+  return (code3 && code3 !== 'USA') ? code3 : null;
 }
 
 // City name → set of country ISO2 codes (for foreign detection)
@@ -255,13 +249,13 @@ function _findForeignCountry(text) {
   // 3-letter ISO codes
   const tokens = text.trim().split(/[,\s\-|;:]+/).filter(Boolean);
   for (const t of tokens) {
-    if (t.length === 3 && ISO3_FOREIGN_CODES.has(t.toUpperCase())) return t.toUpperCase();
+    if (t.length === 3 && isIso3Foreign(t.toUpperCase())) return t.toUpperCase();
   }
 
   // Trailing 2-letter ISO code
   if (tokens.length > 0) {
     const last = tokens[tokens.length - 1].toLowerCase();
-    if (last.length === 2 && last in ISO2_TO_ISO3) return ISO2_TO_ISO3[last];
+    if (last.length === 2) { const _c3 = iso2ToIso3Foreign(last); if (_c3) return _c3; }
   }
 
   return null;
@@ -273,7 +267,7 @@ function _normalizeCommaLocation(geo) {
   const last = segments[segments.length - 1];
   const lastLow = last.toLowerCase();
   // 3-letter ISO foreign code (Built In format: "Berlin, DEU")
-  if (last.length === 3 && ISO3_FOREIGN_CODES.has(last.toUpperCase())) return last.toUpperCase();
+  if (last.length === 3 && isIso3Foreign(last.toUpperCase())) return last.toUpperCase();
   // Foreign country name (via library)
   if (!US_DOMESTIC.has(lastLow)) {
     const lastTitled = last.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
@@ -346,14 +340,14 @@ function isForeignLocation(loc) {
   if (!loc) return false;
 
   // ISO3 foreign code (e.g., "FRA", "GBR")
-  if (ISO3_FOREIGN_CODES.has(loc)) return true;
+  if (isIso3Foreign(loc)) return true;
 
   // "City ISO2" pattern (e.g., "Limassol CY", "Jakarta ID")
   const iso2Match = loc.match(/^.+\s([A-Z]{2})$/);
   if (iso2Match) {
     const code = iso2Match[1].toLowerCase();
     // Only flag as foreign if the ISO2 code maps to a foreign country AND is not a US state
-    if (code in ISO2_TO_ISO3 && !US_STATE_ABBREVS.has(iso2Match[1])) return true;
+    if (iso2ToIso3Foreign(code) && !US_STATE_ABBREVS.has(iso2Match[1])) return true;
   }
 
   // Known foreign city/state name via library lookup
