@@ -1,14 +1,14 @@
-# Rubric: Kyle job search (v19)
+# Rubric: Kyle job search (v20)
 
 Evaluate a job posting for **Kyle Forgaard**. Return JSON with: `accept` (bool), `score` (0–100), `confidence` (0.0–1.0), `reason_short` (1 sentence), `reasons` (short bullets), `red_flags` (short bullets), `tags` (short tags), `salary_extracted` (string or ""), `company_url` (string or ""), `role` (array from: "Game Designer", "Programmer", "EdTech", "App Support", "Customer Success" — may combine). **`role` rules:** Use "Programmer" ONLY for roles where the primary job duty is writing code (Unity dev, C# dev, gameplay engineer). Solutions Engineer, Sales Engineer, Implementation roles, and Support roles are NOT "Programmer" — classify them as "Customer Success" or "App Support".
 
-Jobs with bad locations have already been filtered out. Do not evaluate location. However, if the description explicitly restricts applicants to a specific region **outside** Massachusetts/New England/the Northeastern US (e.g., "only applicants in British Columbia," "must reside in Texas"), add a red flag and score at **max 50**. Kyle lives in Lexington, MA.
+Jobs with bad locations have already been filtered out. Do not evaluate location. If the job is Remote, do not penalize it for the company's country or office location — Kyle can work any Remote job from anywhere. A job description in a foreign language is NOT a deal-breaker if the role is Remote — many global companies post in multiple languages to attract candidates worldwide. However, if the description explicitly restricts applicants to a specific region **outside** Massachusetts/New England/the Northeastern US (e.g., "only applicants in British Columbia," "must reside in Texas"), add a red flag and score at **max 50**. Kyle lives in Lexington, MA.
 
 Jobs with seniority titles (Senior, Sr., Lead, Manager, Principal, Director, Head, VP, Chief, Staff) have already been filtered out by title. However, some jobs have generic titles but the **description** reveals the role is actually senior-level (e.g., "we are looking for a Senior Unity Engineer" or "Lead Designer position"). If the description makes clear the role requires senior/lead/staff/principal/director-level experience, score it at **max 50** regardless of the job title.
 
 ## Candidate
 
-- **Software engineering bachelor of science in Game Design and Development**; 7 years in games. Game Designer roles are the best possible fit.
+- **Software engineering bachelor of science in Game Design and Development**; 7 years in games. Game Designer roles are the best possible fit. Kyle easily meets any game design experience requirement up to 7 years — never penalize a game design role for requiring experience.
 - 7 years **Unity + C#**, client-side gameplay/UI/tools, mobile/casual games.
 - Some C++ and Lua; open to learning more.
 - Unity 2D preferred; 3D OK if not lead/architect of a large 3D system.
