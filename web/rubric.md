@@ -1,4 +1,4 @@
-# Rubric: Kyle job search (v17)
+# Rubric: Kyle job search (v19)
 
 Evaluate a job posting for **Kyle Forgaard**. Return JSON with: `accept` (bool), `score` (0–100), `confidence` (0.0–1.0), `reason_short` (1 sentence), `reasons` (short bullets), `red_flags` (short bullets), `tags` (short tags), `salary_extracted` (string or ""), `company_url` (string or ""), `role` (array from: "Game Designer", "Programmer", "EdTech", "App Support", "Customer Success" — may combine). **`role` rules:** Use "Programmer" ONLY for roles where the primary job duty is writing code (Unity dev, C# dev, gameplay engineer). Solutions Engineer, Sales Engineer, Implementation roles, and Support roles are NOT "Programmer" — classify them as "Customer Success" or "App Support".
 
@@ -8,15 +8,14 @@ Jobs with seniority titles (Senior, Sr., Lead, Manager, Principal, Director, Hea
 
 ## Candidate
 
-- **Game design** degree; 7 years in games. Game Designer roles are the best possible fit.
+- **Software engineering bachelor of science in Game Design and Development**; 7 years in games. Game Designer roles are the best possible fit.
 - 7 years **Unity + C#**, client-side gameplay/UI/tools, mobile/casual games.
 - Some C++ and Lua; open to learning more.
 - Unity 2D preferred; 3D OK if not lead/architect of a large 3D system.
 - **Excels at customer-facing work**: demos, onboarding, support, stakeholder communication.
-- **Entry-level for customer-facing roles.** Kyle has never held a customer success, sales engineering, technical support, or account management title. Reject jobs that explicitly require **3+ years** of experience in those specific roles. **DO NOT reject based on "2 years experience required" or "1+ years" — that is within the acceptable range.** Many companies treat 1–2 year requirements as a soft filter and will interview strong candidates with adjacent experience.
-- **Domain-specific requirements are deal-breakers for Tier 3.** If a Tier 3 (adjacent) job requires industry/domain experience outside of software/technology (e.g., manufacturing, healthcare, financial services, legal, construction), reject it — even if the company itself is a tech/SaaS company serving that industry. This rule does NOT apply to Tier 1 or Tier 2 jobs — evaluate those normally based on game design and Unity/C# fit. General tech skills (SQL, APIs, SaaS, cloud) are NOT disqualifying for any tier — Kyle can learn those.
-- NOT a fit for backend-primary, full-stack-primary, or React-heavy roles.
-- NOT a fit for C# backend (ASP.NET Core, Entity Framework, Web API) even if titled "C# Developer."
+- **Entry-level for customer-facing roles.** Kyle has never held a customer success, sales engineering, technical support, or account management title. Reject jobs that explicitly require **2+ years** of experience in those specific roles. **DO NOT reject based on "1 year experience required" or "1+ years" — that is within the acceptable range.** Many companies treat 1-year requirements as a soft filter and will interview strong candidates with adjacent experience.
+- **Domain-specific requirements are deal-breakers for Tier 3.** If a Tier 3 (adjacent) job requires industry/domain experience outside of software/technology (e.g., manufacturing, healthcare, financial services, legal, construction), reject it — even if the company itself is a tech/SaaS company serving that industry. This rule does NOT apply to Tier 1 or Tier 2 jobs — evaluate those normally based on game design and Unity/C# fit.
+- No bilingual skills.
 
 Unity is not just for games — it's used in EdTech, architecture, healthcare, automotive, film, manufacturing, and retail.
 
@@ -52,8 +51,7 @@ Tier 3 at a real tech company with acceptable salary → score 70–80. Do not p
 
 ## Deal-breakers (accept=false)
 
-- Backend-heavy / full-stack-primary / C# backend (ASP.NET/EF/Web API)
-- React-heavy front-end
+- Backend technologies required (ASP.NET, Node.js, TypeScript, REST APIs, SQL, ODBC, JDBC, etc.) / full-stack-primary / React-heavy
 - VR/XR/AR required (optional mention OK)
 - Android SDK / native Android game dev required
 - Military / defense / weapons (general simulation OK)
@@ -62,8 +60,9 @@ Tier 3 at a real tech company with acceptable salary → score 70–80. Do not p
 - General help-desk / Tier 1 phone support
 - Visa-targeting (OPT/CPT/H1B-only)
 - Travel > 30% of time
-- Requires 3+ years of experience in customer success, sales engineering, technical support, or account management
+- Requires 2+ years of experience in customer success, sales engineering, technical support, or account management
 - Requires a graduate degree (Master's, PhD, MBA) — Kyle has a bachelor's in game design
+- Requires bilingual proficiency — Kyle speaks English only
 
 ## Scoring
 
