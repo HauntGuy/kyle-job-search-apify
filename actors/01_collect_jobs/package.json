@@ -8,6 +8,8 @@
   "dependencies": {
     "apify": "^3.0.0",
     "cheerio": "^1.0.0",
-    "exceljs": "^4.4.0"
+    "country-state-city": "^3.2.1",
+    "exceljs": "^4.4.0",
+    "i18n-iso-countries": "^7.14.0"
   }
 }

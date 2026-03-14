@@ -6,6 +6,12 @@ import ExcelJS from 'exceljs';
 import { gotScraping } from 'got-scraping';
 import { withRetries, processWithRetries, fetchJsonRetryable } from './resilient-fetch.js';
 import { load as cheerioLoad } from 'cheerio';
+import { createRequire } from 'module';
+
+const _require = createRequire(import.meta.url);
+const isoCountries = _require('i18n-iso-countries');
+isoCountries.registerLocale(_require('i18n-iso-countries/langs/en.json'));
+const { City, State, Country } = _require('country-state-city');
 
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
@@ -112,82 +118,64 @@ function canonicalizeUrl(u) {
 // workMode: 'Remote' | 'Hybrid' | 'On-Site' | ''
 // location: normalized geography (e.g., 'Boston MA', 'DEU', 'USA', '')
 
-const STATE_NAME_TO_ABBREV = {
-  'alabama':'AL','alaska':'AK','arizona':'AZ','arkansas':'AR',
-  'california':'CA','colorado':'CO','connecticut':'CT','delaware':'DE',
-  'florida':'FL','georgia':'GA','hawaii':'HI','idaho':'ID',
-  'illinois':'IL','indiana':'IN','iowa':'IA','kansas':'KS',
-  'kentucky':'KY','louisiana':'LA','maine':'ME','maryland':'MD',
-  'massachusetts':'MA','michigan':'MI','minnesota':'MN',
-  'mississippi':'MS','missouri':'MO','montana':'MT','nebraska':'NE',
-  'nevada':'NV','new hampshire':'NH','new jersey':'NJ',
-  'new mexico':'NM','new york':'NY','north carolina':'NC',
-  'north dakota':'ND','ohio':'OH','oklahoma':'OK','oregon':'OR',
-  'pennsylvania':'PA','rhode island':'RI','south carolina':'SC',
-  'south dakota':'SD','tennessee':'TN','texas':'TX','utah':'UT',
-  'vermont':'VT','virginia':'VA','washington':'WA',
-  'west virginia':'WV','wisconsin':'WI','wyoming':'WY',
-  'district of columbia':'DC',
-};
+// Build US state lookups from country-state-city library
+const _usStates = State.getStatesOfCountry('US');
+const STATE_NAME_TO_ABBREV = {};
+const US_STATE_ABBREVS = new Set();
+for (const s of _usStates) {
+  STATE_NAME_TO_ABBREV[s.name.toLowerCase()] = s.isoCode;
+  US_STATE_ABBREVS.add(s.isoCode);
+}
 
-const US_STATE_ABBREVS = new Set(Object.values(STATE_NAME_TO_ABBREV));
-US_STATE_ABBREVS.add('DC');
+// Country name → ISO3 lookup using i18n-iso-countries library
+function countryNameToIso3(name) {
+  const code = isoCountries.getAlpha3Code(name, 'en');
+  if (code && code !== 'USA') return code;
+  // Handle special cases the library might miss
+  const low = (name || '').toLowerCase();
+  if (low === 'england' || low === 'scotland' || low === 'wales') return 'GBR';
+  if (low === 'czechia') return 'CZE';
+  return null;
+}
 
-const COUNTRY_NAME_TO_CODE_LOC = {
-  'afghanistan':'AFG','albania':'ALB','algeria':'DZA','argentina':'ARG',
-  'armenia':'ARM','australia':'AUS','austria':'AUT','azerbaijan':'AZE',
-  'bahrain':'BHR','bangladesh':'BGD','belarus':'BLR','belgium':'BEL',
-  'bolivia':'BOL','bosnia':'BIH','brazil':'BRA','brunei':'BRN',
-  'bulgaria':'BGR','cambodia':'KHM','cameroon':'CMR','canada':'CAN',
-  'chile':'CHL','china':'CHN','colombia':'COL','costa rica':'CRI',
-  'croatia':'HRV','cuba':'CUB','cyprus':'CYP','czech republic':'CZE',
-  'czechia':'CZE','denmark':'DNK','dominican republic':'DOM','ecuador':'ECU',
-  'egypt':'EGY','el salvador':'SLV','england':'GBR','estonia':'EST',
-  'ethiopia':'ETH','finland':'FIN','france':'FRA',
-  'germany':'DEU','ghana':'GHA','greece':'GRC','guatemala':'GTM',
-  'honduras':'HND','hong kong':'HKG','hungary':'HUN','iceland':'ISL',
-  'india':'IND','indonesia':'IDN','iran':'IRN','iraq':'IRQ','ireland':'IRL',
-  'israel':'ISR','italy':'ITA','ivory coast':'CIV','jamaica':'JAM',
-  'japan':'JPN','jordan':'JOR','kazakhstan':'KAZ','kenya':'KEN',
-  'kuwait':'KWT','kyrgyzstan':'KGZ','laos':'LAO','latvia':'LVA',
-  'lebanon':'LBN','libya':'LBY','liechtenstein':'LIE','lithuania':'LTU',
-  'luxembourg':'LUX','macedonia':'MKD','malaysia':'MYS','maldives':'MDV',
-  'malta':'MLT','mauritius':'MUS','mexico':'MEX','moldova':'MDA',
-  'monaco':'MCO','mongolia':'MNG','montenegro':'MNE','morocco':'MAR',
-  'mozambique':'MOZ','myanmar':'MMR','namibia':'NAM','nepal':'NPL',
-  'netherlands':'NLD','new zealand':'NZL','nicaragua':'NIC','nigeria':'NGA',
-  'north korea':'PRK','norway':'NOR','oman':'OMN','pakistan':'PAK',
-  'palestine':'PSE','panama':'PAN','paraguay':'PRY','peru':'PER',
-  'philippines':'PHL','poland':'POL','portugal':'PRT','qatar':'QAT',
-  'romania':'ROU','russia':'RUS','rwanda':'RWA','saudi arabia':'SAU',
-  'scotland':'GBR','senegal':'SEN','serbia':'SRB','singapore':'SGP',
-  'slovakia':'SVK','slovenia':'SVN','south africa':'ZAF','south korea':'KOR',
-  'spain':'ESP','sri lanka':'LKA','sudan':'SDN','sweden':'SWE',
-  'switzerland':'CHE','syria':'SYR','taiwan':'TWN','tajikistan':'TJK',
-  'tanzania':'TZA','thailand':'THA','trinidad':'TTO','tunisia':'TUN',
-  'turkey':'TUR','turkmenistan':'TKM','uganda':'UGA','ukraine':'UKR',
-  'united arab emirates':'ARE','united kingdom':'GBR','uruguay':'URY',
-  'uzbekistan':'UZB','venezuela':'VEN','vietnam':'VNM','wales':'GBR',
-  'yemen':'YEM','zambia':'ZMB','zimbabwe':'ZWE',
-};
-
-const ISO3_FOREIGN_CODES = new Set(Object.values(COUNTRY_NAME_TO_CODE_LOC));
+// ISO3 foreign codes set from library (all countries except USA)
+const _allAlpha3 = isoCountries.getAlpha3Codes();
+const ISO3_FOREIGN_CODES = new Set(Object.keys(_allAlpha3));
 ISO3_FOREIGN_CODES.delete('USA');
 
-const ISO2_FOREIGN_CODES = {
-  'ar':'ARG','at':'AUT','au':'AUS','be':'BEL','br':'BRA',
-  'by':'BLR','ca':'CAN','ch':'CHE','cn':'CHN','co':'COL',
-  'cz':'CZE','de':'DEU','dk':'DNK','ee':'EST','es':'ESP',
-  'fi':'FIN','fr':'FRA','gb':'GBR','gr':'GRC','hu':'HUN',
-  'id':'IDN','ie':'IRL','il':'ISR','in':'IND','it':'ITA',
-  'jp':'JPN','kr':'KOR','lt':'LTU','lv':'LVA','mx':'MEX',
-  'nl':'NLD','no':'NOR','nz':'NZL','ph':'PHL','pk':'PAK',
-  'pl':'POL','pt':'PRT','ro':'ROU','ru':'RUS','se':'SWE',
-  'sg':'SGP','sk':'SVK','th':'THA','tr':'TUR','tw':'TWN',
-  'ua':'UKR','uk':'GBR','vn':'VNM','za':'ZAF',
-};
+// ISO2 → ISO3 mapping for foreign countries
+const _allAlpha2 = isoCountries.getAlpha2Codes();
+const ISO2_TO_ISO3 = {};
+for (const alpha2 of Object.keys(_allAlpha2)) {
+  const alpha3 = isoCountries.alpha2ToAlpha3(alpha2);
+  if (alpha3 && alpha3 !== 'USA') {
+    ISO2_TO_ISO3[alpha2.toLowerCase()] = alpha3;
+  }
+}
+
+// City name → set of country ISO2 codes (for foreign detection)
+const _cityCountryMap = new Map();
+for (const c of City.getAllCities()) {
+  const key = c.name.toLowerCase();
+  if (!_cityCountryMap.has(key)) _cityCountryMap.set(key, new Set());
+  _cityCountryMap.get(key).add(c.countryCode);
+}
+// Also add states/provinces (e.g., Istanbul is a state in Turkey)
+for (const country of Country.getAllCountries()) {
+  for (const state of State.getStatesOfCountry(country.isoCode)) {
+    const key = state.name.toLowerCase();
+    if (!_cityCountryMap.has(key)) _cityCountryMap.set(key, new Set());
+    _cityCountryMap.get(key).add(country.isoCode);
+  }
+}
 
 const US_DOMESTIC = new Set(['united states', 'us', 'usa', 'united states of america']);
+
+const FOREIGN_REGIONS = new Set([
+  'south america','latin america','europe','asia','africa','middle east',
+  'southeast asia','east asia','south asia','central asia','central america','oceania',
+  'eastern europe','western europe','emea','apac','latam',
+]);
 
 function _detectWorkModeRaw(raw) {
   const low = raw.toLowerCase();
@@ -195,12 +183,6 @@ function _detectWorkModeRaw(raw) {
   if (/\bhybrid\b/.test(low)) return 'hybrid';
   if (/\b(on[- ]?site|in[- ]?office|in[- ]?person|onsite)\b/.test(low)) return 'onsite';
   return '';
-}
-
-function _refineRemote(_geo) {
-  // RemoteOK vs RemoteOnly distinction removed — Kyle doesn't care.
-  // If it's remote, location is just informational, never disqualifying.
-  return 'Remote';
 }
 
 function _stripWorkMode(raw) {
@@ -245,30 +227,43 @@ function _findStateInText(text) {
 
 function _findForeignCountry(text) {
   const low = text.toLowerCase().trim();
-  // Multi-word country names (longest match)
-  const multiWord = Object.keys(COUNTRY_NAME_TO_CODE_LOC).filter(n => n.includes(' ')).sort((a, b) => b.length - a.length);
-  for (const name of multiWord) {
-    if (US_DOMESTIC.has(name)) continue;
-    if (low.includes(name)) return COUNTRY_NAME_TO_CODE_LOC[name];
-  }
-  // Single-word country names
+
+  // Try library lookup for full name
+  const alpha3 = countryNameToIso3(text.trim());
+  if (alpha3) return alpha3;
+
+  // Try each word/segment
   const words = low.split(/[,\s\-|;:]+/).filter(Boolean);
   for (const w of words) {
-    if (w in COUNTRY_NAME_TO_CODE_LOC && !US_DOMESTIC.has(w)) {
-      if (w === 'georgia') continue;
-      return COUNTRY_NAME_TO_CODE_LOC[w];
-    }
+    if (US_DOMESTIC.has(w)) continue;
+    if (w === 'georgia') continue; // ambiguous — US state or country
+    // Try as country name (capitalize first letter for library)
+    const capitalized = w.charAt(0).toUpperCase() + w.slice(1);
+    const code = countryNameToIso3(capitalized);
+    if (code) return code;
   }
+
+  // Multi-word country names (e.g., "South Korea", "United Kingdom")
+  const segments = low.split(/[,|;:]+/).map(s => s.trim()).filter(Boolean);
+  for (const seg of segments) {
+    if (US_DOMESTIC.has(seg)) continue;
+    const titleCase = seg.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    const code = countryNameToIso3(titleCase);
+    if (code) return code;
+  }
+
   // 3-letter ISO codes
   const tokens = text.trim().split(/[,\s\-|;:]+/).filter(Boolean);
   for (const t of tokens) {
     if (t.length === 3 && ISO3_FOREIGN_CODES.has(t.toUpperCase())) return t.toUpperCase();
   }
+
   // Trailing 2-letter ISO code
   if (tokens.length > 0) {
     const last = tokens[tokens.length - 1].toLowerCase();
-    if (last.length === 2 && last in ISO2_FOREIGN_CODES) return ISO2_FOREIGN_CODES[last];
+    if (last.length === 2 && last in ISO2_TO_ISO3) return ISO2_TO_ISO3[last];
   }
+
   return null;
 }
 
@@ -279,8 +274,12 @@ function _normalizeCommaLocation(geo) {
   const lastLow = last.toLowerCase();
   // 3-letter ISO foreign code (Built In format: "Berlin, DEU")
   if (last.length === 3 && ISO3_FOREIGN_CODES.has(last.toUpperCase())) return last.toUpperCase();
-  // Foreign country name
-  if (lastLow in COUNTRY_NAME_TO_CODE_LOC && !US_DOMESTIC.has(lastLow)) return COUNTRY_NAME_TO_CODE_LOC[lastLow];
+  // Foreign country name (via library)
+  if (!US_DOMESTIC.has(lastLow)) {
+    const lastTitled = last.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+    const lastAsCountry = countryNameToIso3(lastTitled);
+    if (lastAsCountry) return lastAsCountry;
+  }
   // US domestic
   if (US_DOMESTIC.has(lastLow) || lastLow === 'united states of america') {
     const parts = segments.slice(0, -1);
@@ -340,22 +339,64 @@ function _normalizeNonCommaLocation(geo) {
 }
 
 /**
- * Normalize a raw location string into { workMode, location }.
+ * Determine if a normalized location string refers to a foreign (non-US) location.
+ * Uses library-backed city/country data (~133K cities) for broad coverage.
+ */
+function isForeignLocation(loc) {
+  if (!loc) return false;
+
+  // ISO3 foreign code (e.g., "FRA", "GBR")
+  if (ISO3_FOREIGN_CODES.has(loc)) return true;
+
+  // "City ISO2" pattern (e.g., "Limassol CY", "Jakarta ID")
+  const iso2Match = loc.match(/^.+\s([A-Z]{2})$/);
+  if (iso2Match) {
+    const code = iso2Match[1].toLowerCase();
+    // Only flag as foreign if the ISO2 code maps to a foreign country AND is not a US state
+    if (code in ISO2_TO_ISO3 && !US_STATE_ABBREVS.has(iso2Match[1])) return true;
+  }
+
+  // Known foreign city/state name via library lookup
+  const locLow = loc.toLowerCase();
+  const cityCountries = _cityCountryMap.get(locLow);
+  if (cityCountries) {
+    const hasUS = cityCountries.has('US');
+    const hasForeign = Array.from(cityCountries).some(c => c !== 'US');
+    // Only flag as foreign if it's UNAMBIGUOUSLY foreign (no US match)
+    if (hasForeign && !hasUS) return true;
+  }
+
+  // Country name via library
+  const asCountry = countryNameToIso3(loc.trim().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' '));
+  if (asCountry) return true;
+
+  // Region names (these aren't in any library)
+  if (FOREIGN_REGIONS.has(locLow)) return true;
+
+  // Timezone patterns suggesting Europe
+  if (/\bCET\b|\bGMT[+-]\d/.test(loc)) return true;
+
+  return false;
+}
+
+/**
+ * Normalize a raw location string into { workMode, location, foreign }.
  * workMode: 'Remote' | 'Hybrid' | 'On-Site' | ''
  * location: normalized geography string (informational for Remote jobs)
+ * foreign: boolean — true if location is outside the US
  */
 function normalizeLocationFields(rawLocation) {
   if (!rawLocation || typeof rawLocation !== 'string' || !rawLocation.trim()) {
-    return { workMode: '', location: '' };
+    return { workMode: '', location: '', foreign: false };
   }
   const raw = rawLocation.trim();
   const rawWm = _detectWorkModeRaw(raw);
   let geo = _stripWorkMode(raw);
   if (!geo) {
-    if (rawWm === 'remote') return { workMode: 'Remote', location: '' };
-    if (rawWm === 'hybrid') return { workMode: 'Hybrid', location: '' };
-    if (rawWm === 'onsite') return { workMode: 'On-Site', location: '' };
-    return { workMode: '', location: '' };
+    if (rawWm === 'remote') return { workMode: 'Remote', location: '', foreign: false };
+    if (rawWm === 'hybrid') return { workMode: 'Hybrid', location: '', foreign: false };
+    if (rawWm === 'onsite') return { workMode: 'On-Site', location: '', foreign: false };
+    return { workMode: '', location: '', foreign: false };
   }
   // Multi-location: pick first
   if (geo.includes(';')) {
@@ -376,10 +417,11 @@ function normalizeLocationFields(rawLocation) {
   }
   // Refine work mode
   let workMode = '';
-  if (rawWm === 'remote') workMode = _refineRemote(location);
+  if (rawWm === 'remote') workMode = 'Remote';
   else if (rawWm === 'hybrid') workMode = 'Hybrid';
   else if (rawWm === 'onsite') workMode = 'On-Site';
-  return { workMode, location };
+  const foreign = isForeignLocation(location);
+  return { workMode, location, foreign };
 }
 
 // --------------- Source Normalizers ---------------
@@ -1608,10 +1650,11 @@ Actor.main(async () => {
       const searchTerms = source.input?.titleSearch || [];
       for (const job of trimmed) {
         job.searchTerms = searchTerms;
-        // Normalize location into separate workMode + location fields
-        const { workMode, location } = normalizeLocationFields(job.location);
+        // Normalize location into separate workMode + location + foreign fields
+        const { workMode, location, foreign } = normalizeLocationFields(job.location);
         job.workMode = workMode;
         job.location = location;
+        job.foreign = foreign;
       }
 
       allJobs.push(...trimmed);
