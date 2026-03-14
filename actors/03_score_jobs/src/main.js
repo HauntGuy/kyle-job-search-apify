@@ -368,8 +368,10 @@ function computeLocationOk(job) {
 
   // Foreign location handling (flag set by collector using library-backed city data)
   if (job.foreign) {
+    // Contract/freelance + Remote + foreign → let LLM decide (international contracting is common)
+    const pt = String(job.positionType || '').toLowerCase();
+    if (wm === 'Remote' && (pt.includes('contract') || pt.includes('freelance'))) return 'unknown';
     // Remote + foreign = European-style "remote" (within that country). Reject.
-    // Exception: ambiguous locations like "North America" → let LLM decide.
     if (wm === 'Remote') return 'no';
     return 'no'; // On-Site/Hybrid/blank + foreign → definitely no
   }
