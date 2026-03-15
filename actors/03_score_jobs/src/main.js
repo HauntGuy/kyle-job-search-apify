@@ -1483,15 +1483,17 @@ Actor.main(async () => {
     const score = toInt(evaluation.score ?? evaluation.Score ?? 0, 0);
     const accept = !!(evaluation.accept ?? evaluation.Accept);
 
-    // Enhance location/workMode from LLM response if provided
+    // Use LLM location/workMode only when the collector left them empty.
+    // The collector's normalizeLocationFields() is authoritative; LLM values
+    // were overwriting normalized ISO3 codes with ad-hoc strings like
+    // "Cambridge UK" or "Remote" (causing "Remote | Remote" in accepted.xlsx).
     const llmLocation = evaluation.location;
     const llmWorkMode = evaluation.work_mode;
-    if (llmLocation && typeof llmLocation === 'string' && llmLocation.trim()) {
+    if (!job.location && llmLocation && typeof llmLocation === 'string' && llmLocation.trim()) {
       job.location = llmLocation.trim();
     }
-    if (llmWorkMode && typeof llmWorkMode === 'string' && llmWorkMode.trim()) {
+    if (!job.workMode && llmWorkMode && typeof llmWorkMode === 'string' && llmWorkMode.trim()) {
       let wm = llmWorkMode.trim();
-      // Normalize legacy values the LLM might still return
       if (wm === 'RemoteOK' || wm === 'RemoteOnly') wm = 'Remote';
       job.workMode = wm;
     }

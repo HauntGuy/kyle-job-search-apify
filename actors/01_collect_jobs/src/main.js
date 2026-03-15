@@ -1411,7 +1411,7 @@ function stripHtmlTags(html) {
     .trim();
 }
 
-const GAMEJOBS_CACHE_TTL_DAYS = 30;
+const GAMEJOBS_CACHE_TTL_DAYS = 45;
 const GAMEJOBS_CACHE_KEY = 'gamejobs_detail_cache.json';
 
 async function runGameJobsCo(source, kv) {
@@ -1419,6 +1419,8 @@ async function runGameJobsCo(source, kv) {
   if (!query) throw new Error(`[${source.id}] Missing source.query`);
 
   const maxPages = source.maxPages || 3;
+  const maxAgeDays = source.maxAgeDays || 45;
+  const ageCutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
   const detailDelayMs = source.detailDelayMs || 6000;
   const fetchDetails = source.fetchDetails !== false;
 
@@ -1598,17 +1600,27 @@ async function runGameJobsCo(source, kv) {
     }
 
     const failedEntries = []; // collect 403'd entries for retry
+    let detailsSkippedAge = 0;
 
     for (let i = 0; i < uniqueEntries.length; i++) {
       const entry = uniqueEntries[i];
       const cacheKey = entry.url.toLowerCase();
 
-      // Check cache first
+      // Check cache first (free — no network cost)
       const cached = detailCache[cacheKey];
       if (cached) {
         applyDetail(entry, cached);
         detailsCached++;
         continue;
+      }
+
+      // Skip detail fetching for entries older than maxAgeDays (postedAt from Atom feed)
+      if (entry.postedAt) {
+        const postedMs = new Date(entry.postedAt).getTime();
+        if (!isNaN(postedMs) && postedMs < ageCutoff) {
+          detailsSkippedAge++;
+          continue;
+        }
       }
 
       // Fetch from site
@@ -1645,7 +1657,7 @@ async function runGameJobsCo(source, kv) {
       }
     }
 
-    log.info(`[${source.id}] Detail pages: ${detailsFetched} fetched, ${detailsCached} cached, ${detailsFailed} failed`);
+    log.info(`[${source.id}] Detail pages: ${detailsFetched} fetched, ${detailsCached} cached, ${detailsFailed} failed, ${detailsSkippedAge} skipped (>${maxAgeDays}d old)`);
 
     // Retry pass: re-attempt 403'd pages in shuffled order (different IP + timing)
     if (failedEntries.length > 0) {
@@ -1695,17 +1707,34 @@ async function runGameJobsCo(source, kv) {
   }
 
   const hitCap = pagesFetched >= maxPages && lastPageHadEntries;
-  const jobs = uniqueEntries.map(item => normalizeGameJobsCo(source.id, item));
+
+  // Filter out entries older than maxAgeDays (GameJobs returns relevance-ranked,
+  // not date-ordered, so old jobs are interleaved throughout all pages)
+  const beforeFilter = uniqueEntries.length;
+  const freshEntries = uniqueEntries.filter(e => {
+    if (!e.postedAt) return true; // keep entries with unknown date
+    const posted = new Date(e.postedAt).getTime();
+    return !isNaN(posted) && posted >= ageCutoff;
+  });
+  const ageFiltered = beforeFilter - freshEntries.length;
+  if (ageFiltered > 0) {
+    log.info(`[${source.id}] Age filter: removed ${ageFiltered} entries older than ${maxAgeDays} days (${freshEntries.length} remaining).`);
+  }
+
+  const jobs = freshEntries.map(item => normalizeGameJobsCo(source.id, item));
   return {
     jobs,
     meta: {
       itemCount: jobs.length,
       pagesFetched,
       maxPages,
+      maxAgeDays,
       hitCap,
+      ageFiltered,
       detailsFetched,
       detailsCached,
       detailsFailed,
+      detailsSkippedAge: detailsSkippedAge || 0,
     },
   };
 }
