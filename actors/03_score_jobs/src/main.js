@@ -280,7 +280,7 @@ function truncate(s, maxChars) {
 
 // --------------- Score cache helpers ---------------
 
-const SCORING_FORMAT_VERSION = 'v9'; // v9: Remote → always 'yes' regardless of foreign status (location is just informational for remote jobs)
+const SCORING_FORMAT_VERSION = 'v10'; // v10: replaced foreign with commutable; normalizeJob in collector; enrichDescriptions in scorer
 
 function extractRubricVersion(rubricText) {
   const match = String(rubricText || '').match(/^#\s+Rubric:.*?\((v\d+)\)/i);
@@ -333,70 +333,18 @@ function lookupCache(cacheMap, job) {
 
 // --------------- Location gating (deterministic, outside LLM) ---------------
 
-const COMMUTABLE_TOWNS = new Set([
-  'acton', 'andover', 'arlington', 'ashland', 'ayer', 'bedford', 'belmont',
-  'beverly', 'billerica', 'bolton', 'boston', 'boxborough', 'braintree',
-  'brookline', 'burlington', 'cambridge', 'canton', 'carlisle', 'chelmsford',
-  'chelsea', 'concord', 'danvers', 'dedham', 'dover', 'dracut', 'dunstable',
-  'everett', 'foxborough', 'framingham', 'grafton', 'groton', 'harvard',
-  'holliston', 'hopkinton', 'hudson', 'lawrence', 'lexington', 'lincoln',
-  'littleton', 'lowell', 'lynn', 'lynnfield', 'malden', 'marlborough',
-  'maynard', 'medfield', 'medford', 'medway', 'melrose', 'methuen', 'milford',
-  'millis', 'milton', 'natick', 'needham', 'newton', 'north andover',
-  'north reading', 'northborough', 'norwood', 'peabody', 'pepperell', 'quincy',
-  'reading', 'revere', 'salem', 'saugus', 'sherborn', 'shirley', 'shrewsbury',
-  'somerville', 'southborough', 'stoneham', 'stow', 'sudbury', 'tewksbury',
-  'townsend', 'tyngsborough', 'wakefield', 'walpole', 'waltham', 'watertown',
-  'wayland', 'wellesley', 'westborough', 'westford', 'weston', 'wilmington',
-  'winchester', 'woburn', 'worcester',
-]);
-
 /**
- * Determine if a job's location is acceptable, using pre-normalized fields.
- * job.workMode: 'Remote' | 'Hybrid' | 'On-Site' | ''
- * job.location: normalized geography (e.g., 'Boston MA', 'DEU', 'USA', '')
+ * Determine if a job's location is acceptable, using pre-normalized fields from collector.
+ * job.workMode:   'Remote' | 'Hybrid' | 'On-Site' | ''
+ * job.commutable: true | false | null (set by collector's normalizeLocationFields)
  *
- * Remote jobs are NEVER disqualified by location — location is just informational.
- * Kyle can work any remote job regardless of where the company is based.
- * Location on Remote jobs is purely informational — it never disqualifies.
+ * Remote jobs are NEVER disqualified by location — Kyle can work any remote job.
  */
 function computeLocationOk(job) {
-  const wm = String(job.workMode || '');
-  const loc = String(job.location || '').trim();
-
-  // Remote → always yes, regardless of location or foreign status.
-  // Kyle is happy to work remotely for companies anywhere in the world.
-  if (wm === 'Remote') return 'yes';
-
-  // No location at all → unknown
-  if (!loc) return 'unknown';
-
-  // Foreign location handling (flag set by collector using library-backed city data)
-  // Only applies to non-Remote jobs (On-Site, Hybrid, blank workMode)
-  if (job.foreign) return 'no';
-
-  // Check for MA location
-  if (/\bMA\b/.test(loc)) {
-    // Has a city before MA? Check if commutable
-    const match = loc.match(/^(.+?)\s+MA$/);
-    if (match) {
-      const city = match[1].toLowerCase().trim();
-      if (COMMUTABLE_TOWNS.has(city)) return 'yes';
-      return 'no'; // MA but not commutable
-    }
-    return 'yes'; // bare "MA"
-  }
-
-  // "USA" (generic) → unknown, could be anywhere
-  if (loc === 'USA') return 'unknown';
-
-  // US state abbreviation (2 letters) that isn't MA → no
-  if (/^[A-Z]{2}$/.test(loc) && loc !== 'MA') return 'no';
-
-  // US city + non-MA state → no
-  if (/\s[A-Z]{2}$/.test(loc) && !loc.endsWith(' MA')) return 'no';
-
-  // Couldn't determine → unknown (LLM will decide)
+  if (String(job.workMode || '') === 'Remote') return 'yes';
+  if (job.commutable === true) return 'yes';
+  if (job.commutable === false) return 'no';
+  // commutable is null/undefined → unknown (no location, bare "USA", ambiguous city)
   return 'unknown';
 }
 
@@ -417,57 +365,47 @@ function friendlySourceName(sourceId) {
 // --------------- Position Type Detection ---------------
 
 function detectPositionType(job) {
-  // 1. Check employmentType field (set by collector for Fantastic/LinkedIn sources)
-  const et = String(job.employmentType || '').toLowerCase();
+  // 1. Check normalized employmentType field from collector
+  const et = String(job.employmentType || '');
   if (et) {
-    if (et.includes('intern'))                                           return 'Internship';
-    if (et.includes('contract') || et.includes('freelance') || et.includes('temporary')) return 'Contract';
-    if (et.includes('part-time') || et.includes('part time'))            return 'Part-Time';
-    if (et.includes('full-time') || et.includes('full time'))            return 'Full-Time';
+    // Collector normalizes to exact values; use direct match
+    if (et === 'Internship') return 'Internship';
+    if (et === 'Freelance') return 'Freelance';
+    if (et === 'Temporary') return 'Temporary';
+    if (et === 'Volunteer') return 'Volunteer';
+    if (et === 'Part-Time') return 'Part-Time';
+    if (et === 'Full-Time') return 'Full-Time';
+    // Fallback for un-normalized values (e.g., from enrichDescriptions)
+    const etLow = et.toLowerCase();
+    if (etLow.includes('intern')) return 'Internship';
+    if (etLow.includes('freelance') || etLow.includes('contract') || etLow.includes('1099')) return 'Freelance';
+    if (etLow.includes('temporary') || etLow.includes('temp') || etLow.includes('seasonal')) return 'Temporary';
+    if (etLow.includes('volunteer')) return 'Volunteer';
+    if (etLow.includes('part-time') || etLow.includes('part time')) return 'Part-Time';
+    if (etLow.includes('full-time') || etLow.includes('full time')) return 'Full-Time';
   }
 
   // 2. Check job title
   const title = String(job.title || '');
-  if (/\bintern(ship)?\b/i.test(title))                                 return 'Internship';
-  if (/\b(contract|contractor|freelance)\b/i.test(title))               return 'Contract';
-  if (/\bpart[\s-]?time\b/i.test(title))                                return 'Part-Time';
+  if (/\bintern(ship)?\b/i.test(title)) return 'Internship';
+  if (/\b(contract|contractor|freelance)\b/i.test(title)) return 'Freelance';
+  if (/\bpart[\s-]?time\b/i.test(title)) return 'Part-Time';
 
   // 3. Check description (first 2000 chars for performance)
   const desc = String(job.description || '').slice(0, 2000).toLowerCase();
-  if (/\binternship\b/.test(desc) && /\bintern\b/.test(desc))           return 'Internship';
-  if (/\b(contract position|contract role|independent contractor|1099)\b/.test(desc)) return 'Contract';
+  if (/\binternship\b/.test(desc) && /\bintern\b/.test(desc)) return 'Internship';
+  if (/\b(contract position|contract role|independent contractor|1099)\b/.test(desc)) return 'Freelance';
   if (/\bpart[\s-]?time\b/.test(desc) && !/\bfull[\s-]?time\b/.test(desc)) return 'Part-Time';
 
   return 'Full-Time';
 }
 
-// --------------- Remote Status Enrichment ---------------
-
-function enrichRemoteStatus(job) {
-  const wm = String(job.workMode || '');
-  // Already has remote work mode from collector normalization
-  if (wm === 'Remote') return;
-
-  let isRemote = false;
-
-  // Check employmentType for "Remote"
-  const et = String(job.employmentType || '').toLowerCase();
-  if (et.includes('remote')) isRemote = true;
-
-  // Check description for strong remote signals
-  if (!isRemote) {
-    const desc = String(job.description || '').slice(0, 3000).toLowerCase();
-    isRemote = [
-      /\bremote position\b/, /\bremote role\b/, /\bwork remotely\b/,
-      /\bfully remote\b/, /\b100% remote\b/, /\bremote[\s-]?first\b/,
-      /\bremote work\b/, /\bremote opportunity\b/,
-    ].some(p => p.test(desc));
-  }
-
-  if (isRemote) {
-    job.workMode = 'Remote';
-  }
-}
+// Remote signal patterns (same as collector, used by enrichDescriptions for newly-fetched descriptions)
+const REMOTE_SIGNAL_PATTERNS = [
+  /\bremote position\b/, /\bremote role\b/, /\bwork remotely\b/,
+  /\bfully remote\b/, /\b100% remote\b/, /\bremote[\s-]?first\b/,
+  /\bremote work\b/, /\bremote opportunity\b/,
+];
 
 // --------------- Built In Description Enrichment ---------------
 
@@ -897,8 +835,9 @@ async function buildScoredXlsx(jobs, {
   if (isAcceptedSheet) {
     colDefs.push({ header: 'Where', width: 36, key: 'where' }); // combined workMode + location
   } else {
-    colDefs.push({ header: 'Location',  width: 30, key: 'location' });
-    colDefs.push({ header: 'Work Mode', width: 12, key: 'workMode' });
+    colDefs.push({ header: 'Location',   width: 30, key: 'location' });
+    colDefs.push({ header: 'Work Mode',  width: 12, key: 'workMode' });
+    colDefs.push({ header: 'Commutable', width: 12, key: 'commutable' });
   }
   colDefs.push({ header: 'Position Type', width: 14, key: 'positionType' });
   if (!isAcceptedSheet) {
@@ -980,6 +919,7 @@ async function buildScoredXlsx(jobs, {
       where:        formatLocationForDisplay(j, true),   // combined for accepted.xlsx
       location:     j.location || '',                     // separate for scored.xlsx
       workMode:     j.workMode || '',                     // separate for scored.xlsx
+      commutable:   j.commutable === true ? 'Yes' : j.commutable === false ? 'No' : '',
       positionType,
       score,
       role:         roleStr,
@@ -1135,7 +1075,7 @@ Actor.main(async () => {
     if (!job.employmentType && job.positionType !== 'Full-Time') {
       job.employmentType = job.positionType;
     }
-    enrichRemoteStatus(job); // must be before computeLocationOk
+    // enrichRemoteStatus absorbed into collector's normalizeJob pass
   }
 
   // --- Pre-compute location for all jobs and skip location_ok = "no" ---
@@ -1227,7 +1167,7 @@ Actor.main(async () => {
   if (builtInJobsToEnrich.length > 0) {
     log.info(`Built In description enrichment: ${builtInJobsToEnrich.length} jobs need descriptions.`);
 
-    for (const { job } of builtInJobsToEnrich) {
+    for (const { job, index } of builtInJobsToEnrich) {
       const url = job.url || job.applyUrl;
       if (!url) { builtInEnrichment.failed++; continue; }
 
@@ -1237,6 +1177,14 @@ Actor.main(async () => {
         job.description = cached.description;
         if (cached.employmentType && !job.employmentType) {
           job.employmentType = cached.employmentType;
+        }
+        // Check cached description for remote signals
+        if (job.workMode !== 'Remote') {
+          const desc = cached.description.slice(0, 3000).toLowerCase();
+          if (REMOTE_SIGNAL_PATTERNS.some(p => p.test(desc))) {
+            job.workMode = 'Remote';
+            preLocationMap.set(index, computeLocationOk(job));
+          }
         }
         builtInEnrichment.cached++;
         continue;
@@ -1255,6 +1203,14 @@ Actor.main(async () => {
           builtInEnrichment.fetched++;
           if (result.employmentType && !job.employmentType) {
             job.employmentType = result.employmentType;
+          }
+          // Check newly fetched description for remote signals
+          if (job.workMode !== 'Remote') {
+            const desc = result.description.slice(0, 3000).toLowerCase();
+            if (REMOTE_SIGNAL_PATTERNS.some(p => p.test(desc))) {
+              job.workMode = 'Remote';
+              preLocationMap.set(index, computeLocationOk(job));
+            }
           }
           log.info(`Built In enriched: "${job.title}" at ${job.company} (${result.description.length} chars)`);
         } else {

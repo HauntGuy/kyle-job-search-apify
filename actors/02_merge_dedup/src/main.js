@@ -184,6 +184,10 @@ function mergeTwo(a, b, preferLinkedInApply) {
     merged.companyUrl = bCompanyUrl;
   }
   merged.location = merged.location || b.location || '';
+  merged.workMode = merged.workMode || b.workMode || '';
+  // For commutable: prefer true > null > false (trust the most positive signal)
+  if (merged.commutable == null) merged.commutable = b.commutable;
+  else if (b.commutable === true) merged.commutable = true;
   merged.postedAt = merged.postedAt || b.postedAt || '';
   merged.salary = merged.salary || b.salary || '';
   merged.employmentType = merged.employmentType || b.employmentType || '';

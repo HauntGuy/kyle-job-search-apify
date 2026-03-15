@@ -158,16 +158,20 @@ function iso2ToIso3Foreign(code2) {
 }
 
 // City name → set of country ISO2 codes (for foreign detection)
+// Normalize keys by stripping diacritics (e.g., İzmir → izmir) for reliable lookup
+function _stripDiacritics(s) {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\u0131/g, 'i').replace(/\u0130/g, 'I');
+}
 const _cityCountryMap = new Map();
 for (const c of City.getAllCities()) {
-  const key = c.name.toLowerCase();
+  const key = _stripDiacritics(c.name).toLowerCase();
   if (!_cityCountryMap.has(key)) _cityCountryMap.set(key, new Set());
   _cityCountryMap.get(key).add(c.countryCode);
 }
-// Also add states/provinces (e.g., Istanbul is a state in Turkey)
+// Also add states/provinces (e.g., Istanbul is a state in Turkey, İzmir is a state in Turkey)
 for (const country of Country.getAllCountries()) {
   for (const state of State.getStatesOfCountry(country.isoCode)) {
-    const key = state.name.toLowerCase();
+    const key = _stripDiacritics(state.name).toLowerCase();
     if (!_cityCountryMap.has(key)) _cityCountryMap.set(key, new Set());
     _cityCountryMap.get(key).add(country.isoCode);
   }
@@ -180,6 +184,97 @@ const FOREIGN_REGIONS = new Set([
   'southeast asia','east asia','south asia','central asia','central america','oceania',
   'eastern europe','western europe','emea','apac','latam',
 ]);
+
+// --------------- Employment Type & Work Mode Maps ---------------
+// Central lookup tables. Unknown values get logged for diagnostics (not silently defaulted).
+const EMPLOYMENT_TYPE_MAP = {
+  'full-time': 'Full-Time', 'full_time': 'Full-Time', 'fulltime': 'Full-Time',
+  'full time': 'Full-Time', 'permanent': 'Full-Time', 'fte': 'Full-Time',
+  'regular': 'Full-Time',
+  'part-time': 'Part-Time', 'part_time': 'Part-Time', 'parttime': 'Part-Time',
+  'part time': 'Part-Time',
+  'contract': 'Freelance', 'contractor': 'Freelance', 'freelance': 'Freelance',
+  'freelancer': 'Freelance', '1099': 'Freelance', 'self-employed': 'Freelance',
+  'per_diem': 'Freelance', 'per diem': 'Freelance',
+  'temporary': 'Temporary', 'temp': 'Temporary', 'seasonal': 'Temporary',
+  'intermittent': 'Temporary',
+  'intern': 'Internship', 'internship': 'Internship',
+  'volunteer': 'Volunteer', 'volunteering': 'Volunteer',
+};
+
+const WORK_MODE_MAP = {
+  'remote': 'Remote', 'telecommute': 'Remote', 'work from home': 'Remote',
+  'wfh': 'Remote', 'fully remote': 'Remote',
+  'hybrid': 'Hybrid', 'flexible': 'Hybrid',
+  'on-site': 'On-Site', 'onsite': 'On-Site', 'on site': 'On-Site',
+  'in-office': 'On-Site', 'in office': 'On-Site', 'in-person': 'On-Site',
+};
+
+// Track unknown values for diagnostics
+const unknownEmploymentTypes = new Set();
+const unknownWorkModes = new Set();
+
+/**
+ * Normalize an employmentType value from source data.
+ * Source data sometimes puts work mode in employmentType (e.g., "Full-time, Remote").
+ * Returns { employmentType, extractedWorkMode }.
+ */
+function normalizeEmploymentType(raw) {
+  if (!raw || typeof raw !== 'string' || !raw.trim()) {
+    return { employmentType: null, extractedWorkMode: null };
+  }
+  let extractedWorkMode = null;
+  let remaining = raw.trim().toLowerCase();
+
+  // Check if work mode is embedded (e.g., "Full-time, Remote" or just "Remote")
+  for (const [key, mode] of Object.entries(WORK_MODE_MAP)) {
+    if (remaining === key) {
+      return { employmentType: null, extractedWorkMode: mode };
+    }
+    // Strip work mode from compound value: "Full-time, Remote" → "full-time"
+    const re = new RegExp(`[,;/|\\s]+${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+    if (re.test(remaining)) {
+      extractedWorkMode = mode;
+      remaining = remaining.replace(re, '').trim();
+    }
+  }
+
+  if (!remaining) return { employmentType: null, extractedWorkMode };
+
+  const mapped = EMPLOYMENT_TYPE_MAP[remaining];
+  if (mapped) return { employmentType: mapped, extractedWorkMode };
+
+  // Unknown value — log for diagnostics
+  unknownEmploymentTypes.add(raw.trim());
+  return { employmentType: null, extractedWorkMode };
+}
+
+// --------------- Commutable Towns (within ~45 min of Lexington MA) ---------------
+const COMMUTABLE_TOWNS = new Set([
+  'acton', 'andover', 'arlington', 'ashland', 'ayer', 'bedford', 'belmont',
+  'beverly', 'billerica', 'bolton', 'boston', 'boxborough', 'braintree',
+  'brookline', 'burlington', 'cambridge', 'canton', 'carlisle', 'chelmsford',
+  'chelsea', 'concord', 'danvers', 'dedham', 'dover', 'dracut', 'dunstable',
+  'everett', 'foxborough', 'framingham', 'grafton', 'groton', 'harvard',
+  'holliston', 'hopkinton', 'hudson', 'lawrence', 'lexington', 'lincoln',
+  'littleton', 'lowell', 'lynn', 'lynnfield', 'malden', 'marlborough',
+  'maynard', 'medfield', 'medford', 'medway', 'melrose', 'methuen', 'milford',
+  'millis', 'milton', 'natick', 'needham', 'newton', 'north andover',
+  'north reading', 'northborough', 'norwood', 'peabody', 'pepperell', 'quincy',
+  'reading', 'revere', 'salem', 'saugus', 'sherborn', 'shirley', 'shrewsbury',
+  'somerville', 'southborough', 'stoneham', 'stow', 'sudbury', 'tewksbury',
+  'townsend', 'tyngsborough', 'wakefield', 'walpole', 'waltham', 'watertown',
+  'wayland', 'wellesley', 'westborough', 'westford', 'weston', 'wilmington',
+  'winchester', 'woburn', 'worcester',
+
+]);
+
+// Remote signal patterns for description scanning
+const REMOTE_SIGNAL_PATTERNS = [
+  /\bremote position\b/, /\bremote role\b/, /\bwork remotely\b/,
+  /\bfully remote\b/, /\b100% remote\b/, /\bremote[\s-]?first\b/,
+  /\bremote work\b/, /\bremote opportunity\b/,
+];
 
 function _detectWorkModeRaw(raw) {
   const low = raw.toLowerCase();
@@ -201,252 +296,304 @@ function _stripWorkMode(raw) {
   s = s.replace(/\b(remote|hybrid|on[- ]?site|in[- ]?office|in[- ]?person|onsite)\b/ig, '');
   // "Office" suffix (e.g., "Warsaw Office" -> "Warsaw")
   s = s.replace(/\s+[Oo]ffice\s*$/, '');
+  // Strip parenthesized timezone hints (e.g., "(CET ±2h)", "(GMT+1)")
+  s = s.replace(/\s*\((?:CET|GMT|EST|PST|UTC)[^)]*\)\s*/ig, '');
   // Clean up leftover delimiters
   s = s.replace(/\s*[|/,\-:]\s*$/, '').replace(/^\s*[|/,\-:]\s*/, '');
   return s.trim();
 }
 
-function _findStateInText(text) {
-  const low = text.toLowerCase().trim();
-  // Multi-word state names first
-  const multiWord = Object.keys(STATE_NAME_TO_ABBREV).filter(n => n.includes(' ')).sort((a, b) => b.length - a.length);
-  for (const name of multiWord) {
-    if (low.includes(name)) return STATE_NAME_TO_ABBREV[name];
+/**
+ * Classify-first location normalization.
+ * Instead of branching on format (comma vs no-comma), we identify components
+ * (country, state, city) from tokens, then assemble the output.
+ *
+ * Returns { workMode, location, commutable }
+ *   workMode:   'Remote' | 'Hybrid' | 'On-Site' | ''
+ *   location:   normalized display string (e.g., 'Boston MA', 'GBR', 'Izmir')
+ *   commutable: true | false | null (within ~45 min of Lexington MA; null = unknown)
+ */
+function _titleCase(s) {
+  return s.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+}
+
+function _classifyToken(token) {
+  const trimmed = token.trim();
+  if (!trimmed) return null;
+  const upper = trimmed.toUpperCase();
+  const lower = trimmed.toLowerCase();
+
+  // US domestic signal ("USA", "US", "United States", etc.)
+  if (US_DOMESTIC.has(lower)) return { type: 'domestic' };
+
+  // 3-letter ISO3 foreign code
+  if (trimmed.length === 3 && isIso3Foreign(upper)) return { type: 'foreignCountry', iso3: upper };
+
+  // 2-letter code: check if it's a US state OR foreign ISO2
+  if (trimmed.length === 2) {
+    const asUpper = upper;
+    if (US_STATE_ABBREVS.has(asUpper)) return { type: 'usState', abbrev: asUpper };
+    const iso3 = iso2ToIso3Foreign(asUpper);
+    if (iso3) return { type: 'foreignCountry', iso3 };
   }
-  // Single-word state names
-  const words = low.split(/[,\s]+/).filter(Boolean);
-  for (const w of words) {
-    if (w in STATE_NAME_TO_ABBREV) {
-      if (w === 'georgia' && !low.includes('united states')) continue; // ambiguous
-      return STATE_NAME_TO_ABBREV[w];
+
+  // US state full name
+  if (lower in STATE_NAME_TO_ABBREV) {
+    // "Georgia" is ambiguous — US state or country
+    if (lower === 'georgia') return { type: 'ambiguousState', abbrev: STATE_NAME_TO_ABBREV[lower] };
+    return { type: 'usState', abbrev: STATE_NAME_TO_ABBREV[lower] };
+  }
+
+  // Foreign country name (single word)
+  const asCountry = countryNameToIso3(_titleCase(trimmed));
+  if (asCountry) return { type: 'foreignCountry', iso3: asCountry };
+
+  // Foreign region name
+  if (FOREIGN_REGIONS.has(lower)) return { type: 'foreignRegion', name: _titleCase(trimmed) };
+
+  return null; // unclassified — potential city name
+}
+
+function _classifyMultiWordPhrase(words) {
+  // Try 3-word, then 2-word sliding windows for multi-word country/state names
+  for (let windowSize = Math.min(3, words.length); windowSize >= 2; windowSize--) {
+    for (let i = 0; i <= words.length - windowSize; i++) {
+      const phrase = words.slice(i, i + windowSize).join(' ');
+      const phraseLow = phrase.toLowerCase();
+
+      if (US_DOMESTIC.has(phraseLow)) return { type: 'domestic', consumed: windowSize, startIdx: i };
+
+      // Multi-word US state (e.g., "New York", "North Carolina")
+      if (phraseLow in STATE_NAME_TO_ABBREV) {
+        return { type: 'usState', abbrev: STATE_NAME_TO_ABBREV[phraseLow], consumed: windowSize, startIdx: i };
+      }
+
+      // Multi-word country name (e.g., "United Kingdom", "South Korea", "Costa Rica")
+      const iso3 = countryNameToIso3(_titleCase(phrase));
+      if (iso3) return { type: 'foreignCountry', iso3, consumed: windowSize, startIdx: i };
     }
-  }
-  // 2-letter uppercase abbreviations
-  const tokens = text.trim().split(/[,\s]+/).filter(Boolean);
-  for (const t of tokens) {
-    if (t.length === 2 && t === t.toUpperCase() && US_STATE_ABBREVS.has(t)) return t;
   }
   return null;
 }
 
-function _findForeignCountry(text) {
-  const low = text.toLowerCase().trim();
-
-  // Try library lookup for full name
-  const alpha3 = countryNameToIso3(text.trim());
-  if (alpha3) return alpha3;
-
-  // Try each word/segment
-  const words = low.split(/[,\s\-|;:]+/).filter(Boolean);
-  for (const w of words) {
-    if (US_DOMESTIC.has(w)) continue;
-    if (w === 'georgia') continue; // ambiguous — US state or country
-    // Try as country name (capitalize first letter for library)
-    const capitalized = w.charAt(0).toUpperCase() + w.slice(1);
-    const code = countryNameToIso3(capitalized);
-    if (code) return code;
-  }
-
-  // Multi-word country names (e.g., "South Korea", "United Kingdom")
-  // First try comma/pipe-separated segments
-  const segments = low.split(/[,|;:]+/).map(s => s.trim()).filter(Boolean);
-  for (const seg of segments) {
-    if (US_DOMESTIC.has(seg)) continue;
-    const titleCase = seg.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-    const code = countryNameToIso3(titleCase);
-    if (code) return code;
-  }
-
-  // Sliding window: try 2-word and 3-word contiguous subsequences
-  // Catches "United Kingdom" within "London Greater London United Kingdom"
-  for (const seg of segments) {
-    const sw = seg.split(/\s+/).filter(Boolean);
-    for (let windowSize = 3; windowSize >= 2; windowSize--) {
-      for (let i = 0; i <= sw.length - windowSize; i++) {
-        const phrase = sw.slice(i, i + windowSize).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-        if (US_DOMESTIC.has(phrase.toLowerCase())) continue;
-        const code = countryNameToIso3(phrase);
-        if (code) return code;
-      }
-    }
-  }
-
-  // 3-letter ISO codes
-  const tokens = text.trim().split(/[,\s\-|;:]+/).filter(Boolean);
-  for (const t of tokens) {
-    if (t.length === 3 && isIso3Foreign(t.toUpperCase())) return t.toUpperCase();
-  }
-
-  // Trailing 2-letter ISO code
-  if (tokens.length > 0) {
-    const last = tokens[tokens.length - 1].toLowerCase();
-    if (last.length === 2) { const _c3 = iso2ToIso3Foreign(last); if (_c3) return _c3; }
-  }
-
-  return null;
+function _computeCommutable(stateAbbrev, cityName) {
+  if (stateAbbrev !== 'MA') return false;
+  if (!cityName) return true; // bare "MA" — assume commutable
+  return COMMUTABLE_TOWNS.has(cityName.toLowerCase().trim());
 }
 
-function _normalizeCommaLocation(geo) {
-  const segments = geo.split(',').map(s => s.trim()).filter(Boolean);
-  if (!segments.length) return '';
-  const last = segments[segments.length - 1];
-  const lastLow = last.toLowerCase();
-  // 3-letter ISO foreign code (Built In format: "Berlin, DEU")
-  if (last.length === 3 && isIso3Foreign(last.toUpperCase())) return last.toUpperCase();
-  // Foreign country name (via library)
-  if (!US_DOMESTIC.has(lastLow)) {
-    const lastTitled = last.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-    const lastAsCountry = countryNameToIso3(lastTitled);
-    if (lastAsCountry) return lastAsCountry;
+function _resolveUSCity(cityName) {
+  // Try to find the city in the US and return {location, commutable}, or null if not found
+  const cityLow = _stripDiacritics(cityName).toLowerCase().trim();
+  const usCities = City.getCitiesOfCountry('US').filter(c => c.name.toLowerCase() === cityLow);
+  if (usCities.length === 0) return null;
+  // If multiple US cities match (e.g., Boston GA, Boston MA, Boston NY),
+  // prefer the one in MA (commutable state), then fall back to first
+  let best = usCities[0];
+  if (usCities.length > 1) {
+    const maMatch = usCities.find(c => c.stateCode === 'MA');
+    if (maMatch) best = maMatch;
   }
-  // US domestic
-  if (US_DOMESTIC.has(lastLow) || lastLow === 'united states of america') {
-    const parts = segments.slice(0, -1);
-    if (!parts.length) return 'USA';
-    for (let i = parts.length - 1; i >= 0; i--) {
-      const st = _findStateInText(parts[i]);
-      if (st) {
-        const city = parts.slice(0, i).map(s => s.trim());
-        return city.length ? `${city[0].split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')} ${st}` : st;
-      }
-    }
-    return parts[0].split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-  }
-  // Check for state abbreviation in segments
-  for (let i = segments.length - 1; i >= 0; i--) {
-    const st = _findStateInText(segments[i]);
-    if (st) {
-      const city = segments.slice(0, i).map(s => s.trim());
-      if (city.length) {
-        const titleCity = city[0].split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-        return `${titleCity} ${st}`;
-      }
-      return st;
-    }
-  }
-  // Check full text for foreign country
-  const foreign = _findForeignCountry(geo);
-  if (foreign) return foreign;
-  // Fallback
-  return segments.map(s => s.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')).join(', ');
+  const stateCode = best.stateCode;
+  return { location: `${_titleCase(cityName)} ${stateCode}`, commutable: _computeCommutable(stateCode, cityName) };
 }
 
-function _normalizeNonCommaLocation(geo) {
-  if (!geo.trim()) return '';
-  // Foreign country
-  const foreign = _findForeignCountry(geo);
-  if (foreign) return foreign;
-  // US state
-  const state = _findStateInText(geo);
-  if (state) {
-    let clean = geo.replace(/\b(united states of america|united states|usa|us)\b/ig, '');
-    clean = clean.replace(/\b\d{5}(-\d{4})?\b/g, ''); // zip codes
-    const tokens = clean.split(/[\-|;:\s]+/).filter(t => t && t.toUpperCase() !== state
-      && !(t.toLowerCase() in STATE_NAME_TO_ABBREV) && t.length > 1);
-    const cityTokens = tokens.filter(t => !(/^\d+$/.test(t)) && !(t.length === 2 && US_STATE_ABBREVS.has(t.toUpperCase())));
-    if (cityTokens.length) {
-      const city = cityTokens.slice(0, 3).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-      return `${city} ${state}`;
-    }
-    return state;
+function _resolveCityOnly(cityName) {
+  // Look up city in library to determine country (strip diacritics for reliable match)
+  const cityLow = _stripDiacritics(cityName).toLowerCase().trim();
+  const countries = _cityCountryMap.get(cityLow);
+  if (!countries) return null;
+
+  const hasUS = countries.has('US');
+  const foreignCodes = Array.from(countries).filter(c => c !== 'US');
+  const hasForeign = foreignCodes.length > 0;
+
+  if (hasForeign && !hasUS) {
+    // Unambiguously foreign — return ISO3 of the country
+    const iso3 = isoCountries.alpha2ToAlpha3(foreignCodes[0]);
+    return { location: iso3 || _titleCase(cityName), commutable: false };
   }
-  // "United States" without state
-  if (US_DOMESTIC.has(geo.toLowerCase().trim())) return 'USA';
-  if (/\bunited states\b/i.test(geo)) return 'USA';
-  // Unknown
-  return geo.trim().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+  if (hasUS && !hasForeign) {
+    // Unambiguously US — try to find the state
+    const resolved = _resolveUSCity(cityName);
+    if (resolved) return resolved;
+    return { location: _titleCase(cityName), commutable: null };
+  }
+  // Ambiguous (exists in both US and foreign) — try US resolution first
+  // (US job search context: "Boston" is almost certainly Boston MA, not Boston UK)
+  if (hasUS) {
+    const resolved = _resolveUSCity(cityName);
+    if (resolved) return resolved;
+  }
+  return { location: _titleCase(cityName), commutable: null };
 }
 
-/**
- * Determine if a normalized location string refers to a foreign (non-US) location.
- * Uses library-backed city/country data (~133K cities) for broad coverage.
- */
-const US_DOMESTIC_NAMES = new Set(['usa', 'us', 'united states', 'united states of america']);
-
-function isForeignLocation(loc) {
-  if (!loc) return false;
-
-  // US domestic codes/names → definitely not foreign
-  if (US_DOMESTIC_NAMES.has(loc.toLowerCase())) return false;
-
-  // ISO3 foreign code (e.g., "FRA", "GBR")
-  if (isIso3Foreign(loc)) return true;
-
-  // "City ISO2" pattern (e.g., "Limassol CY", "Jakarta ID", "Cambridge Uk")
-  // Case-insensitive on the 2-letter suffix to handle title-cased input
-  const iso2Match = loc.match(/^.+\s([A-Za-z]{2})$/);
-  if (iso2Match) {
-    const suffix = iso2Match[1].toUpperCase();
-    // Only flag as foreign if the ISO2 code maps to a foreign country AND is not a US state
-    if (iso2ToIso3Foreign(suffix) && !US_STATE_ABBREVS.has(suffix)) return true;
-  }
-
-  // Known foreign city/state name via library lookup
-  const locLow = loc.toLowerCase();
-  const cityCountries = _cityCountryMap.get(locLow);
-  if (cityCountries) {
-    const hasUS = cityCountries.has('US');
-    const hasForeign = Array.from(cityCountries).some(c => c !== 'US');
-    // Only flag as foreign if it's UNAMBIGUOUSLY foreign (no US match)
-    if (hasForeign && !hasUS) return true;
-  }
-
-  // Country name via library
-  const asCountry = countryNameToIso3(loc.trim().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' '));
-  if (asCountry) return true;
-
-  // Region names (these aren't in any library)
-  if (FOREIGN_REGIONS.has(locLow)) return true;
-
-  // Timezone patterns suggesting Europe
-  if (/\bCET\b|\bGMT[+-]\d/.test(loc)) return true;
-
-  return false;
-}
-
-/**
- * Normalize a raw location string into { workMode, location, foreign }.
- * workMode: 'Remote' | 'Hybrid' | 'On-Site' | ''
- * location: normalized geography string (informational for Remote jobs)
- * foreign: boolean — true if location is outside the US
- */
 function normalizeLocationFields(rawLocation) {
   if (!rawLocation || typeof rawLocation !== 'string' || !rawLocation.trim()) {
-    return { workMode: '', location: '', foreign: false };
+    return { workMode: '', location: '', commutable: null };
   }
   const raw = rawLocation.trim();
   const rawWm = _detectWorkModeRaw(raw);
   let geo = _stripWorkMode(raw);
-  if (!geo) {
-    if (rawWm === 'remote') return { workMode: 'Remote', location: '', foreign: false };
-    if (rawWm === 'hybrid') return { workMode: 'Hybrid', location: '', foreign: false };
-    if (rawWm === 'onsite') return { workMode: 'On-Site', location: '', foreign: false };
-    return { workMode: '', location: '', foreign: false };
-  }
-  // Multi-location: pick first
-  if (geo.includes(';')) {
-    const parts = geo.split(';').map(s => s.trim()).filter(Boolean);
-    if (parts.length > 1) geo = parts[0];
-  }
-  // Route to handler
-  let location;
-  if (geo.includes(',')) {
-    location = _normalizeCommaLocation(geo);
-  } else {
-    location = _normalizeNonCommaLocation(geo);
-  }
-  // Normalize US variants
-  const locLow = location.toLowerCase();
-  if (locLow === 'united states' || locLow === 'us' || locLow === 'usa' || locLow === 'united states of america') {
-    location = 'USA';
-  }
-  // Refine work mode
+
+  // Determine work mode
   let workMode = '';
   if (rawWm === 'remote') workMode = 'Remote';
   else if (rawWm === 'hybrid') workMode = 'Hybrid';
   else if (rawWm === 'onsite') workMode = 'On-Site';
-  const foreign = isForeignLocation(location);
-  return { workMode, location, foreign };
+
+  if (!geo) {
+    return { workMode, location: '', commutable: null };
+  }
+
+  // Multi-location: pick first (e.g., "Boston; New York; Chicago")
+  if (geo.includes(';')) {
+    const parts = geo.split(';').map(s => s.trim()).filter(Boolean);
+    if (parts.length > 1) geo = parts[0];
+  }
+
+  // --- Segment on any delimiter ---
+  const segments = geo.split(/[,|;:/]+/).map(s => s.trim()).filter(Boolean);
+
+  // --- Classify all tokens across all segments ---
+  let foundCountry = null;      // { iso3 } or null
+  let foundState = null;        // { abbrev } or null
+  let foundDomestic = false;    // "USA"/"US" signal
+  let foundRegion = null;       // foreign region name
+  let ambiguousState = null;    // "Georgia" — could be US state or country
+  const cityTokens = [];        // unclassified tokens = potential city names
+
+  for (const segment of segments) {
+    const words = segment.split(/\s+/).filter(Boolean);
+    if (!words.length) continue;
+
+    // Strip zip codes
+    const cleaned = words.filter(w => !/^\d{5}(-\d{4})?$/.test(w));
+    if (!cleaned.length) continue;
+
+    // Try multi-word classification first
+    const multiResult = _classifyMultiWordPhrase(cleaned);
+    if (multiResult) {
+      if (multiResult.type === 'foreignCountry') { foundCountry = { iso3: multiResult.iso3 }; }
+      else if (multiResult.type === 'usState') { foundState = { abbrev: multiResult.abbrev }; }
+      else if (multiResult.type === 'domestic') { foundDomestic = true; }
+      // Collect remaining words as city tokens
+      const remaining = [...cleaned.slice(0, multiResult.startIdx), ...cleaned.slice(multiResult.startIdx + multiResult.consumed)];
+      // If a US state name consumed the entire segment with no remaining words,
+      // also treat the matched phrase as a potential city name (e.g., "New York" is both state and city)
+      if (multiResult.type === 'usState' && remaining.length === 0 && multiResult.consumed === cleaned.length) {
+        cityTokens.push(...cleaned.slice(multiResult.startIdx, multiResult.startIdx + multiResult.consumed));
+      }
+      for (const w of remaining) {
+        const c = _classifyToken(w);
+        if (!c) cityTokens.push(w);
+        else if (c.type === 'foreignCountry' && !foundCountry) foundCountry = c;
+        else if (c.type === 'usState' && !foundState) foundState = c;
+        else if (c.type === 'domestic') foundDomestic = true;
+        else if (c.type === 'ambiguousState' && !ambiguousState) ambiguousState = c;
+        else if (c.type === 'foreignRegion' && !foundRegion) foundRegion = c;
+        else cityTokens.push(w); // couldn't use classification, keep as city
+      }
+      continue;
+    }
+
+    // Classify individual tokens right-to-left (country/state codes are at the end),
+    // but collect city tokens in a temp array so we can preserve original left-to-right order
+    const segCityTokens = [];
+    for (let i = cleaned.length - 1; i >= 0; i--) {
+      const c = _classifyToken(cleaned[i]);
+      if (!c) {
+        segCityTokens.push(cleaned[i]);
+      } else if (c.type === 'foreignCountry' && !foundCountry) {
+        foundCountry = c;
+      } else if (c.type === 'usState') {
+        if (!foundState) foundState = c;
+        // Else: duplicate state (e.g., "NY" when "New York" already found) — discard, don't add as city
+      } else if (c.type === 'domestic') {
+        foundDomestic = true;
+      } else if (c.type === 'ambiguousState' && !ambiguousState) {
+        ambiguousState = c;
+      } else if (c.type === 'foreignRegion' && !foundRegion) {
+        foundRegion = c;
+      } else if (c.type === 'foreignCountry') {
+        // Duplicate foreign country — discard, don't add as city
+      } else {
+        segCityTokens.push(cleaned[i]); // unhandled classification, keep as city
+      }
+    }
+    // Reverse to restore original left-to-right order
+    segCityTokens.reverse();
+    cityTokens.push(...segCityTokens);
+  }
+
+  // Check for timezone patterns suggesting foreign
+  if (!foundCountry && /\bCET\b|\bGMT[+-]\d/.test(geo)) {
+    foundRegion = { name: geo.trim() };
+  }
+
+  // --- Resolve ---
+  const cityStr = cityTokens.length
+    ? cityTokens.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
+    : '';
+
+  // Priority 1: Foreign country found
+  if (foundCountry) {
+    return { workMode, location: foundCountry.iso3, commutable: false };
+  }
+
+  // Priority 2: US state found
+  if (foundState) {
+    if (cityStr) {
+      const commutable = _computeCommutable(foundState.abbrev, cityStr);
+      return { workMode, location: `${cityStr} ${foundState.abbrev}`, commutable };
+    }
+    const commutable = foundState.abbrev === 'MA' ? true : false;
+    return { workMode, location: foundState.abbrev, commutable };
+  }
+
+  // Priority 3: Domestic signal ("USA"/"US") with city — try to find the state
+  if (foundDomestic && cityStr) {
+    const resolved = _resolveCityOnly(cityStr);
+    if (resolved) return { workMode, location: resolved.location, commutable: resolved.commutable };
+    return { workMode, location: cityStr, commutable: null };
+  }
+
+  // Priority 4: Bare domestic signal
+  if (foundDomestic) {
+    return { workMode, location: 'USA', commutable: null };
+  }
+
+  // Priority 5: Foreign region
+  if (foundRegion) {
+    return { workMode, location: foundRegion.name, commutable: false };
+  }
+
+  // Priority 6: Ambiguous state (e.g., "Georgia" — US state or country)
+  if (ambiguousState && !cityStr) {
+    // Standalone "Georgia" with no other context — treat as ambiguous
+    return { workMode, location: _titleCase('Georgia'), commutable: null };
+  }
+  if (ambiguousState && cityStr) {
+    // "Tbilisi, Georgia" — city lookup to disambiguate
+    const cityCountries = _cityCountryMap.get(cityStr.toLowerCase());
+    if (cityCountries) {
+      const hasGE = cityCountries.has('GE'); // Georgia the country
+      if (hasGE) return { workMode, location: 'GEO', commutable: false };
+    }
+    // Default: assume US state Georgia
+    const commutable = _computeCommutable(ambiguousState.abbrev, cityStr);
+    return { workMode, location: `${cityStr} ${ambiguousState.abbrev}`, commutable };
+  }
+
+  // Priority 7: City-only (no state, no country, no domestic signal)
+  if (cityStr) {
+    const resolved = _resolveCityOnly(cityStr);
+    if (resolved) return { workMode, ...resolved };
+    return { workMode, location: cityStr, commutable: null };
+  }
+
+  // Priority 8: Nothing classifiable
+  return { workMode, location: geo.trim(), commutable: null };
 }
 
 // --------------- Source Normalizers ---------------
@@ -1596,6 +1743,7 @@ async function buildCollectedXlsx(jobs) {
     { header: 'Job Title',     width: 46 },
     { header: 'Location',      width: 30 },
     { header: 'Work Mode',     width: 12 },
+    { header: 'Commutable',    width: 12 },
     { header: 'Position Type', width: 14 },
     { header: 'Salary',        width: 22 },
     { header: 'Posted At',     width: 22 },
@@ -1618,6 +1766,7 @@ async function buildCollectedXlsx(jobs) {
       j.title || '',            // will become hyperlink
       j.location || '',
       j.workMode || '',
+      j.commutable === true ? 'Yes' : j.commutable === false ? 'No' : '',
       j.employmentType || '',
       j.salary || '',
       j.postedAt || '',
@@ -1691,11 +1840,25 @@ Actor.main(async () => {
       const searchTerms = source.input?.titleSearch || [];
       for (const job of trimmed) {
         job.searchTerms = searchTerms;
-        // Normalize location into separate workMode + location + foreign fields
-        const { workMode, location, foreign } = normalizeLocationFields(job.location);
+
+        // Normalize location into separate workMode + location + commutable fields
+        const { workMode, location, commutable } = normalizeLocationFields(job.location);
         job.workMode = workMode;
         job.location = location;
-        job.foreign = foreign;
+        job.commutable = commutable;
+
+        // Normalize employmentType (may extract work mode from mixed values like "Full-time, Remote")
+        const { employmentType: normEt, extractedWorkMode } = normalizeEmploymentType(job.employmentType);
+        if (normEt) job.employmentType = normEt;
+        if (extractedWorkMode && !job.workMode) job.workMode = extractedWorkMode;
+
+        // Scan description for remote signals (enrichRemoteStatus, absorbed into collector)
+        if (!job.workMode || job.workMode !== 'Remote') {
+          const desc = String(job.description || '').slice(0, 3000).toLowerCase();
+          if (REMOTE_SIGNAL_PATTERNS.some(p => p.test(desc))) {
+            job.workMode = 'Remote';
+          }
+        }
       }
 
       allJobs.push(...trimmed);
@@ -1773,6 +1936,18 @@ Actor.main(async () => {
   const finishedAt = nowIso();
   report.finishedAt = finishedAt;
   report.durationSecs = Math.round((Date.parse(finishedAt) - Date.parse(startedAt)) / 1000);
+
+  // Log unknown employmentType/workMode values for diagnostics
+  if (unknownEmploymentTypes.size > 0) {
+    const vals = Array.from(unknownEmploymentTypes);
+    log.warning(`Unknown employmentType values (${vals.length}): ${vals.join(', ')}`);
+    report.unknownEmploymentTypes = vals;
+  }
+  if (unknownWorkModes.size > 0) {
+    const vals = Array.from(unknownWorkModes);
+    log.warning(`Unknown workMode values (${vals.length}): ${vals.join(', ')}`);
+    report.unknownWorkModes = vals;
+  }
 
   const datasetInfo = { id: rawDataset.getId?.() || null, name: rawDatasetName, itemCount: pushed };
   await kv.setValue('raw_dataset.json', datasetInfo);
