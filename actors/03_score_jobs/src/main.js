@@ -1425,7 +1425,10 @@ Actor.main(async () => {
 
     // 2) Location gate — deterministic reject, overrides cache
     const locationOk = preLocationMap.get(idx) || computeLocationOk(job);
-    if (locationOk === 'no') {
+    // Reject 'no' (confirmed non-commutable) AND 'unknown' for non-Remote jobs.
+    // If we can't confirm a non-Remote job is commutable to Lexington, it probably isn't.
+    // Remote jobs always get locationOk='yes' from computeLocationOk, so this never blocks them.
+    if (locationOk === 'no' || locationOk === 'unknown') {
       locationSkipped += 1;
       return {
         ...job,
@@ -1434,9 +1437,13 @@ Actor.main(async () => {
           accepted: false,
           score: 0,
           confidence: 1.0,
-          location_ok: 'no',
-          reason_short: 'Location not commutable to Lexington, MA and not remote.',
-          reasons: ['Location outside commutable zone.'],
+          location_ok: locationOk,
+          reason_short: locationOk === 'no'
+            ? 'Location not commutable to Lexington, MA and not remote.'
+            : 'Location could not be confirmed as commutable to Lexington, MA.',
+          reasons: [locationOk === 'no'
+            ? 'Location outside commutable zone.'
+            : 'Location ambiguous and not remote — assumed non-commutable.'],
           red_flags: ['Location disqualified (pre-filter).'],
           tags: [],
           salary_extracted: '',
