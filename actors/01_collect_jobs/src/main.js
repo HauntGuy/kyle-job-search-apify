@@ -355,8 +355,9 @@ function _classifyToken(token) {
 }
 
 function _classifyMultiWordPhrase(words) {
-  // Try 3-word, then 2-word sliding windows for multi-word country/state names
-  for (let windowSize = Math.min(3, words.length); windowSize >= 2; windowSize--) {
+  // Try 4-word, 3-word, then 2-word sliding windows for multi-word country/state names
+  // (4-word needed for "United States of America")
+  for (let windowSize = Math.min(4, words.length); windowSize >= 2; windowSize--) {
     for (let i = 0; i <= words.length - windowSize; i++) {
       const phrase = words.slice(i, i + windowSize).join(' ');
       const phraseLow = phrase.toLowerCase();
@@ -383,51 +384,77 @@ function _computeCommutable(stateAbbrev, cityName) {
 }
 
 function _resolveUSCity(cityName) {
-  // Try to find the city in the US and return {location, commutable}, or null if not found
+  // Given a city name known to be in the US (via domestic signal), resolve state.
+  // Only resolves when unambiguous (exactly 1 US city with that name).
+  // Multiple matches (e.g., Boston GA/MA/NY) → leave as bare city, commutable: null.
   const cityLow = _stripDiacritics(cityName).toLowerCase().trim();
   const usCities = City.getCitiesOfCountry('US').filter(c => c.name.toLowerCase() === cityLow);
-  if (usCities.length === 0) return null;
-  // If multiple US cities match (e.g., Boston GA, Boston MA, Boston NY),
-  // prefer the one in MA (commutable state), then fall back to first
-  let best = usCities[0];
-  if (usCities.length > 1) {
-    const maMatch = usCities.find(c => c.stateCode === 'MA');
-    if (maMatch) best = maMatch;
+  if (usCities.length === 1) {
+    const sc = usCities[0].stateCode;
+    return { location: `${_titleCase(cityName)} ${sc}`, commutable: _computeCommutable(sc, cityName) };
   }
-  const stateCode = best.stateCode;
-  return { location: `${_titleCase(cityName)} ${stateCode}`, commutable: _computeCommutable(stateCode, cityName) };
+  // 0 matches or multiple US cities with same name — ambiguous
+  return { location: _titleCase(cityName), commutable: null };
 }
 
 function _resolveCityOnly(cityName) {
-  // Look up city in library to determine country (strip diacritics for reliable match)
+  // Bare city with no state/country/domestic context. Conservative:
+  //   - Foreign-only city → ISO3, commutable: false
+  //   - US-only city → try _resolveUSCity (resolves if unambiguous)
+  //   - Ambiguous (US + foreign) → bare city, commutable: null
   const cityLow = _stripDiacritics(cityName).toLowerCase().trim();
   const countries = _cityCountryMap.get(cityLow);
   if (!countries) return null;
 
   const hasUS = countries.has('US');
   const foreignCodes = Array.from(countries).filter(c => c !== 'US');
-  const hasForeign = foreignCodes.length > 0;
 
-  if (hasForeign && !hasUS) {
-    // Unambiguously foreign — return ISO3 of the country
+  if (foreignCodes.length > 0 && !hasUS) {
+    // Unambiguously foreign — return ISO3
     const iso3 = isoCountries.alpha2ToAlpha3(foreignCodes[0]);
     return { location: iso3 || _titleCase(cityName), commutable: false };
   }
-  if (hasUS && !hasForeign) {
-    // Unambiguously US — try to find the state
-    const resolved = _resolveUSCity(cityName);
-    if (resolved) return resolved;
-    return { location: _titleCase(cityName), commutable: null };
+  if (hasUS && foreignCodes.length === 0) {
+    // Unambiguously US — resolve state if single match
+    return _resolveUSCity(cityName);
   }
-  // Ambiguous (exists in both US and foreign) — try US resolution first
-  // (US job search context: "Boston" is almost certainly Boston MA, not Boston UK)
-  if (hasUS) {
-    const resolved = _resolveUSCity(cityName);
-    if (resolved) return resolved;
-  }
+  // Ambiguous (exists in both US and foreign countries) — don't guess
   return { location: _titleCase(cityName), commutable: null };
 }
 
+/**
+ * Classify a comma-separated segment as a single geographical entity.
+ * Returns a classification object or null if the segment is a city/place name.
+ */
+function _classifySegment(segment) {
+  const words = segment.split(/\s+/).filter(Boolean);
+  const cleaned = words.filter(w => !/^\d{5}(-\d{4})?$/.test(w));
+  if (!cleaned.length) return null;
+
+  // Try multi-word classification (must consume the entire segment)
+  const multi = _classifyMultiWordPhrase(cleaned);
+  if (multi && multi.consumed === cleaned.length) return multi;
+
+  // Single word: try token classification
+  if (cleaned.length === 1) return _classifyToken(cleaned[0]);
+
+  // Multi-word segment not fully classified — treat as city/place name
+  return null;
+}
+
+/**
+ * Classify-first, comma-positional location normalization.
+ *
+ * Two modes:
+ *   - Multi-segment (comma-separated): each segment is classified as a whole,
+ *     right-to-left.  Commas act as structural boundaries between city / state /
+ *     country.  No special cases needed for "New York, NY" because the comma
+ *     tells us "New York" is the city and "NY" is the state.
+ *   - Single segment (no commas): token-level classification within the segment,
+ *     right-to-left.  Handles "Cambridge UK", "Jakarta IDN", "Boston", etc.
+ *
+ * Returns { workMode, location, commutable }
+ */
 function normalizeLocationFields(rawLocation) {
   if (!rawLocation || typeof rawLocation !== 'string' || !rawLocation.trim()) {
     return { workMode: '', location: '', commutable: null };
@@ -446,95 +473,115 @@ function normalizeLocationFields(rawLocation) {
     return { workMode, location: '', commutable: null };
   }
 
-  // Multi-location: pick first (e.g., "Boston; New York; Chicago")
-  if (geo.includes(';')) {
-    const parts = geo.split(';').map(s => s.trim()).filter(Boolean);
-    if (parts.length > 1) geo = parts[0];
-  }
+  // Multi-location: pick first (e.g., "Boston; New York; Chicago", "Austin | Dallas")
+  const multiLocParts = geo.split(/[;|/]/).map(s => s.trim()).filter(Boolean);
+  if (multiLocParts.length > 1) geo = multiLocParts[0];
 
-  // --- Segment on any delimiter ---
-  const segments = geo.split(/[,|;:/]+/).map(s => s.trim()).filter(Boolean);
+  // --- Split on commas for positional parsing ---
+  const segments = geo.split(',').map(s => s.trim()).filter(Boolean);
 
-  // --- Classify all tokens across all segments ---
   let foundCountry = null;      // { iso3 } or null
   let foundState = null;        // { abbrev } or null
   let foundDomestic = false;    // "USA"/"US" signal
   let foundRegion = null;       // foreign region name
   let ambiguousState = null;    // "Georgia" — could be US state or country
-  const cityTokens = [];        // unclassified tokens = potential city names
+  const cityParts = [];         // city segments (multi) or city tokens (single)
 
-  for (const segment of segments) {
-    const words = segment.split(/\s+/).filter(Boolean);
-    if (!words.length) continue;
-
-    // Strip zip codes
-    const cleaned = words.filter(w => !/^\d{5}(-\d{4})?$/.test(w));
-    if (!cleaned.length) continue;
-
-    // Try multi-word classification first
-    const multiResult = _classifyMultiWordPhrase(cleaned);
-    if (multiResult) {
-      if (multiResult.type === 'foreignCountry') { foundCountry = { iso3: multiResult.iso3 }; }
-      else if (multiResult.type === 'usState') { foundState = { abbrev: multiResult.abbrev }; }
-      else if (multiResult.type === 'domestic') { foundDomestic = true; }
-      // Collect remaining words as city tokens
-      const remaining = [...cleaned.slice(0, multiResult.startIdx), ...cleaned.slice(multiResult.startIdx + multiResult.consumed)];
-      // If a US state name consumed the entire segment with no remaining words,
-      // also treat the matched phrase as a potential city name (e.g., "New York" is both state and city)
-      if (multiResult.type === 'usState' && remaining.length === 0 && multiResult.consumed === cleaned.length) {
-        cityTokens.push(...cleaned.slice(multiResult.startIdx, multiResult.startIdx + multiResult.consumed));
+  if (segments.length >= 2) {
+    // --- Multi-segment (comma-separated): positional parsing ---
+    // Rightmost segments are most likely state/country/domestic signals.
+    for (let i = segments.length - 1; i >= 0; i--) {
+      const result = _classifySegment(segments[i]);
+      if (result && result.type === 'foreignCountry' && !foundCountry) {
+        foundCountry = result;
+      } else if (result && result.type === 'usState' && !foundState) {
+        foundState = result;
+      } else if (result && result.type === 'domestic') {
+        foundDomestic = true;
+      } else if (result && result.type === 'ambiguousState' && !ambiguousState) {
+        ambiguousState = result;
+      } else if (result && result.type === 'foreignRegion' && !foundRegion) {
+        foundRegion = result;
+      } else {
+        cityParts.unshift(segments[i]); // preserve left-to-right order
       }
+    }
+  } else {
+    // --- Single segment (no commas): token-level parsing ---
+    const words = segments[0].split(/\s+/).filter(Boolean);
+    const cleaned = words.filter(w => !/^\d{5}(-\d{4})?$/.test(w));
+    if (!cleaned.length) return { workMode, location: '', commutable: null };
+
+    // Try multi-word classification first (e.g., "South Korea", "United Kingdom")
+    const multi = _classifyMultiWordPhrase(cleaned);
+    if (multi) {
+      if (multi.type === 'foreignCountry') foundCountry = { iso3: multi.iso3 };
+      else if (multi.type === 'usState') foundState = { abbrev: multi.abbrev };
+      else if (multi.type === 'domestic') foundDomestic = true;
+      const remaining = [...cleaned.slice(0, multi.startIdx), ...cleaned.slice(multi.startIdx + multi.consumed)];
       for (const w of remaining) {
         const c = _classifyToken(w);
-        if (!c) cityTokens.push(w);
+        if (!c) cityParts.push(w);
         else if (c.type === 'foreignCountry' && !foundCountry) foundCountry = c;
         else if (c.type === 'usState' && !foundState) foundState = c;
         else if (c.type === 'domestic') foundDomestic = true;
         else if (c.type === 'ambiguousState' && !ambiguousState) ambiguousState = c;
         else if (c.type === 'foreignRegion' && !foundRegion) foundRegion = c;
-        else cityTokens.push(w); // couldn't use classification, keep as city
+        else cityParts.push(w);
       }
-      continue;
-    }
-
-    // Classify individual tokens right-to-left (country/state codes are at the end),
-    // but collect city tokens in a temp array so we can preserve original left-to-right order
-    const segCityTokens = [];
-    for (let i = cleaned.length - 1; i >= 0; i--) {
-      const c = _classifyToken(cleaned[i]);
-      if (!c) {
-        segCityTokens.push(cleaned[i]);
-      } else if (c.type === 'foreignCountry' && !foundCountry) {
-        foundCountry = c;
-      } else if (c.type === 'usState') {
-        if (!foundState) foundState = c;
-        // Else: duplicate state (e.g., "NY" when "New York" already found) — discard, don't add as city
-      } else if (c.type === 'domestic') {
-        foundDomestic = true;
-      } else if (c.type === 'ambiguousState' && !ambiguousState) {
-        ambiguousState = c;
-      } else if (c.type === 'foreignRegion' && !foundRegion) {
-        foundRegion = c;
-      } else if (c.type === 'foreignCountry') {
-        // Duplicate foreign country — discard, don't add as city
-      } else {
-        segCityTokens.push(cleaned[i]); // unhandled classification, keep as city
+    } else {
+      // Classify individual tokens right-to-left
+      const segCityTokens = [];
+      for (let i = cleaned.length - 1; i >= 0; i--) {
+        const c = _classifyToken(cleaned[i]);
+        if (!c) {
+          segCityTokens.push(cleaned[i]);
+        } else if (c.type === 'foreignCountry' && !foundCountry) {
+          foundCountry = c;
+        } else if (c.type === 'usState') {
+          if (!foundState) foundState = c;
+          // Duplicate state — discard, don't add as city
+        } else if (c.type === 'domestic') {
+          foundDomestic = true;
+        } else if (c.type === 'ambiguousState' && !ambiguousState) {
+          ambiguousState = c;
+        } else if (c.type === 'foreignRegion' && !foundRegion) {
+          foundRegion = c;
+        } else if (c.type === 'foreignCountry') {
+          // Duplicate foreign country — discard
+        } else {
+          segCityTokens.push(cleaned[i]);
+        }
       }
+      segCityTokens.reverse();
+      cityParts.push(...segCityTokens);
     }
-    // Reverse to restore original left-to-right order
-    segCityTokens.reverse();
-    cityTokens.push(...segCityTokens);
-  }
-
-  // Check for timezone patterns suggesting foreign
-  if (!foundCountry && /\bCET\b|\bGMT[+-]\d/.test(geo)) {
-    foundRegion = { name: geo.trim() };
   }
 
   // --- Resolve ---
-  const cityStr = cityTokens.length
-    ? cityTokens.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
+  const cityStr = cityParts.length
+    ? _titleCase(cityParts.join(' ').trim())
     : '';
+
+  // Promote ambiguous state when domestic signal confirms US (e.g., "Atlanta, Georgia, United States")
+  if (ambiguousState && foundDomestic && !foundState) {
+    foundState = { abbrev: ambiguousState.abbrev };
+    ambiguousState = null;
+  }
+
+  // Validate state+city: if city doesn't exist in ANY US state but the 2-letter abbrev
+  // is also a foreign ISO2 code, prefer the foreign interpretation (e.g., "Jakarta ID" → Indonesia)
+  if (foundState && cityStr && !foundDomestic && !foundCountry) {
+    const cityLow = _stripDiacritics(cityStr).toLowerCase();
+    const cityCountries = _cityCountryMap.get(cityLow);
+    if (cityCountries && !cityCountries.has('US')) {
+      const iso3 = iso2ToIso3Foreign(foundState.abbrev);
+      if (iso3) {
+        foundCountry = { iso3 };
+        foundState = null;
+      }
+    }
+  }
 
   // Priority 1: Foreign country found
   if (foundCountry) {
@@ -551,11 +598,10 @@ function normalizeLocationFields(rawLocation) {
     return { workMode, location: foundState.abbrev, commutable };
   }
 
-  // Priority 3: Domestic signal ("USA"/"US") with city — try to find the state
+  // Priority 3: Domestic signal ("USA"/"US") with city — resolve state if unambiguous
   if (foundDomestic && cityStr) {
-    const resolved = _resolveCityOnly(cityStr);
-    if (resolved) return { workMode, location: resolved.location, commutable: resolved.commutable };
-    return { workMode, location: cityStr, commutable: null };
+    const resolved = _resolveUSCity(cityStr);
+    return { workMode, ...resolved };
   }
 
   // Priority 4: Bare domestic signal
@@ -570,22 +616,20 @@ function normalizeLocationFields(rawLocation) {
 
   // Priority 6: Ambiguous state (e.g., "Georgia" — US state or country)
   if (ambiguousState && !cityStr) {
-    // Standalone "Georgia" with no other context — treat as ambiguous
     return { workMode, location: _titleCase('Georgia'), commutable: null };
   }
   if (ambiguousState && cityStr) {
     // "Tbilisi, Georgia" — city lookup to disambiguate
-    const cityCountries = _cityCountryMap.get(cityStr.toLowerCase());
-    if (cityCountries) {
-      const hasGE = cityCountries.has('GE'); // Georgia the country
-      if (hasGE) return { workMode, location: 'GEO', commutable: false };
+    const cityCountries = _cityCountryMap.get(_stripDiacritics(cityStr).toLowerCase());
+    if (cityCountries && cityCountries.has('GE')) {
+      return { workMode, location: 'GEO', commutable: false };
     }
     // Default: assume US state Georgia
     const commutable = _computeCommutable(ambiguousState.abbrev, cityStr);
     return { workMode, location: `${cityStr} ${ambiguousState.abbrev}`, commutable };
   }
 
-  // Priority 7: City-only (no state, no country, no domestic signal)
+  // Priority 7: City-only (no state, country, or domestic signal)
   if (cityStr) {
     const resolved = _resolveCityOnly(cityStr);
     if (resolved) return { workMode, ...resolved };
