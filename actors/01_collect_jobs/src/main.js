@@ -148,8 +148,12 @@ function countryNameToIso3(name) {
 function isIso3Foreign(code) {
   return code !== 'USA' && !!isoCountries.getName(code, 'en');
 }
+// Non-standard ISO-2 aliases (e.g., "UK" is commonly used but standard is "GB")
+const ISO2_ALIASES = { UK: 'GB' };
 function iso2ToIso3Foreign(code2) {
-  const code3 = isoCountries.alpha2ToAlpha3(code2.toUpperCase());
+  const upper = code2.toUpperCase();
+  const resolved = ISO2_ALIASES[upper] || upper;
+  const code3 = isoCountries.alpha2ToAlpha3(resolved);
   return (code3 && code3 !== 'USA') ? code3 : null;
 }
 
@@ -244,12 +248,27 @@ function _findForeignCountry(text) {
   }
 
   // Multi-word country names (e.g., "South Korea", "United Kingdom")
+  // First try comma/pipe-separated segments
   const segments = low.split(/[,|;:]+/).map(s => s.trim()).filter(Boolean);
   for (const seg of segments) {
     if (US_DOMESTIC.has(seg)) continue;
     const titleCase = seg.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
     const code = countryNameToIso3(titleCase);
     if (code) return code;
+  }
+
+  // Sliding window: try 2-word and 3-word contiguous subsequences
+  // Catches "United Kingdom" within "London Greater London United Kingdom"
+  for (const seg of segments) {
+    const sw = seg.split(/\s+/).filter(Boolean);
+    for (let windowSize = 3; windowSize >= 2; windowSize--) {
+      for (let i = 0; i <= sw.length - windowSize; i++) {
+        const phrase = sw.slice(i, i + windowSize).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        if (US_DOMESTIC.has(phrase.toLowerCase())) continue;
+        const code = countryNameToIso3(phrase);
+        if (code) return code;
+      }
+    }
   }
 
   // 3-letter ISO codes
@@ -353,12 +372,13 @@ function isForeignLocation(loc) {
   // ISO3 foreign code (e.g., "FRA", "GBR")
   if (isIso3Foreign(loc)) return true;
 
-  // "City ISO2" pattern (e.g., "Limassol CY", "Jakarta ID")
-  const iso2Match = loc.match(/^.+\s([A-Z]{2})$/);
+  // "City ISO2" pattern (e.g., "Limassol CY", "Jakarta ID", "Cambridge Uk")
+  // Case-insensitive on the 2-letter suffix to handle title-cased input
+  const iso2Match = loc.match(/^.+\s([A-Za-z]{2})$/);
   if (iso2Match) {
-    const code = iso2Match[1].toLowerCase();
+    const suffix = iso2Match[1].toUpperCase();
     // Only flag as foreign if the ISO2 code maps to a foreign country AND is not a US state
-    if (iso2ToIso3Foreign(code) && !US_STATE_ABBREVS.has(iso2Match[1])) return true;
+    if (iso2ToIso3Foreign(suffix) && !US_STATE_ABBREVS.has(suffix)) return true;
   }
 
   // Known foreign city/state name via library lookup
