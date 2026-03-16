@@ -407,6 +407,113 @@ const REMOTE_SIGNAL_PATTERNS = [
   /\bremote work\b/, /\bremote opportunity\b/,
 ];
 
+// --------------- Commutable towns (subset of collector's list, for Built In enrichment) ---------------
+
+const COMMUTABLE_TOWNS = new Set([
+  'acton', 'andover', 'arlington', 'ashland', 'ayer', 'bedford', 'belmont',
+  'beverly', 'billerica', 'bolton', 'boston', 'boxborough', 'braintree',
+  'brookline', 'burlington', 'cambridge', 'canton', 'carlisle', 'chelmsford',
+  'chelsea', 'concord', 'danvers', 'dedham', 'dover', 'dracut', 'dunstable',
+  'everett', 'foxborough', 'framingham', 'grafton', 'groton', 'harvard',
+  'holliston', 'hopkinton', 'hudson', 'lawrence', 'lexington', 'lincoln',
+  'littleton', 'lowell', 'lynn', 'lynnfield', 'malden', 'marlborough',
+  'maynard', 'medfield', 'medford', 'medway', 'melrose', 'methuen', 'milford',
+  'millis', 'milton', 'natick', 'needham', 'newton', 'north andover',
+  'north reading', 'northborough', 'norwood', 'peabody', 'pepperell', 'quincy',
+  'reading', 'revere', 'salem', 'saugus', 'sherborn', 'shirley', 'shrewsbury',
+  'somerville', 'southborough', 'stoneham', 'stow', 'sudbury', 'tewksbury',
+  'townsend', 'tyngsborough', 'wakefield', 'walpole', 'waltham', 'watertown',
+  'wayland', 'wellesley', 'westborough', 'westford', 'weston', 'wilmington',
+  'winchester', 'woburn', 'worcester',
+]);
+
+/**
+ * Apply Built In JSON-LD structured data to a job object.
+ * Updates location, workMode, commutable, postedAt, salary, and expired status.
+ * Returns true if the job should be rejected (non-USA applicant requirement or expired).
+ */
+function applyBuiltInStructuredData(job, data, index, preLocationMap) {
+  let changed = false;
+
+  // Basic fields
+  if (data.employmentType && !job.employmentType) job.employmentType = data.employmentType;
+  if (data.datePosted && !job.postedAt) job.postedAt = data.datePosted;
+  if (data.salary && !job.salary) job.salary = data.salary;
+
+  // jobLocationType: TELECOMMUTE = Remote
+  if (data.jobLocationType === 'TELECOMMUTE' && job.workMode !== 'Remote') {
+    job.workMode = 'Remote';
+    changed = true;
+  }
+
+  // applicantLocationRequirements: if USA is not listed, job is not for US applicants
+  const appCountries = data.applicantCountries || [];
+  if (appCountries.length > 0 && !appCountries.includes('USA') && !appCountries.includes('US')) {
+    job.commutable = false;
+    // Update location to the first listed country if we don't have a better one
+    if (!job.location || job.location === '') {
+      job.location = appCountries[0]; // Already ISO3 from Built In
+    }
+    changed = true;
+  }
+
+  // jobLocation address: use for location enrichment
+  const addr = data.jobLocationAddress || {};
+  if (addr.addressCountry) {
+    const country = addr.addressCountry; // Already ISO3 from Built In (e.g., "USA", "GBR", "TUR")
+    if (country === 'USA' || country === 'US') {
+      // US job — check commutability from city
+      const city = (addr.addressLocality || '').trim().toLowerCase();
+      const region = (addr.addressRegion || '').trim();
+      if (city && COMMUTABLE_TOWNS.has(city) && /^(MA|Massachusetts)$/i.test(region)) {
+        job.commutable = true;
+        job.location = `${addr.addressLocality} MA`;
+        changed = true;
+      } else if (region) {
+        // US but not commutable — set location to "City ST" or just state
+        const stateAbbrev = region.length === 2 ? region.toUpperCase() : '';
+        if (city && stateAbbrev) {
+          job.location = `${addr.addressLocality} ${stateAbbrev}`;
+        } else if (stateAbbrev) {
+          job.location = stateAbbrev;
+        }
+        job.commutable = false;
+        changed = true;
+      }
+    } else {
+      // Foreign country
+      job.commutable = false;
+      if (!job.location || job.location === '' || !/^[A-Z]{3}$/.test(job.location)) {
+        job.location = country; // Use ISO3 from structured data
+      }
+      changed = true;
+    }
+  }
+
+  // validThrough: if expired, mark job
+  if (data.validThrough) {
+    const expiry = new Date(data.validThrough);
+    if (!isNaN(expiry.getTime()) && expiry < new Date()) {
+      job._expired = true;
+    }
+  }
+
+  // Remote signal check from description
+  if (job.workMode !== 'Remote' && data.description) {
+    const desc = data.description.slice(0, 3000).toLowerCase();
+    if (REMOTE_SIGNAL_PATTERNS.some(p => p.test(desc))) {
+      job.workMode = 'Remote';
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    preLocationMap.set(index, computeLocationOk(job));
+  }
+
+  return false; // don't reject here — let the normal filters handle it
+}
+
 // --------------- Built In Description Enrichment ---------------
 
 const BUILTIN_DESC_CACHE_TTL_DAYS = 30;
@@ -546,11 +653,32 @@ async function fetchBuiltInDescription(url) {
       }
       for (const posting of postings) {
         if (posting.description) {
+          // Extract applicantLocationRequirements — can be object or array of objects
+          const alr = posting.applicantLocationRequirements;
+          let applicantCountries = [];
+          if (Array.isArray(alr)) {
+            applicantCountries = alr.map(c => c?.name || '').filter(Boolean);
+          } else if (alr?.name) {
+            applicantCountries = [alr.name];
+          }
+
+          // Extract jobLocation address
+          const addr = posting.jobLocation?.address || {};
+          const jobLocationAddress = {
+            addressCountry: addr.addressCountry || '',
+            addressLocality: addr.addressLocality || '',
+            addressRegion: addr.addressRegion || '',
+          };
+
           return {
             description: stripHtmlTags(posting.description),
             employmentType: posting.employmentType || '',
             datePosted: posting.datePosted || '',
             salary: formatBaseSalary(posting.baseSalary) || '',
+            validThrough: posting.validThrough || '',
+            jobLocationType: posting.jobLocationType || '',   // TELECOMMUTE = remote
+            applicantCountries,                                // e.g. ["USA"] or ["GBR","DEU","POL"]
+            jobLocationAddress,                                // { addressCountry, addressLocality, addressRegion }
           };
         }
       }
@@ -1224,23 +1352,7 @@ Actor.main(async () => {
       const cached = builtInDescCache[url];
       if (cached?.description) {
         job.description = cached.description;
-        if (cached.employmentType && !job.employmentType) {
-          job.employmentType = cached.employmentType;
-        }
-        if (cached.datePosted && !job.postedAt) {
-          job.postedAt = cached.datePosted;
-        }
-        if (cached.salary && !job.salary) {
-          job.salary = cached.salary;
-        }
-        // Check cached description for remote signals
-        if (job.workMode !== 'Remote') {
-          const desc = cached.description.slice(0, 3000).toLowerCase();
-          if (REMOTE_SIGNAL_PATTERNS.some(p => p.test(desc))) {
-            job.workMode = 'Remote';
-            preLocationMap.set(index, computeLocationOk(job));
-          }
-        }
+        applyBuiltInStructuredData(job, cached, index, preLocationMap);
         builtInEnrichment.cached++;
         continue;
       }
@@ -1255,27 +1367,15 @@ Actor.main(async () => {
             employmentType: result.employmentType || '',
             datePosted: result.datePosted || '',
             salary: result.salary || '',
+            validThrough: result.validThrough || '',
+            jobLocationType: result.jobLocationType || '',
+            applicantCountries: result.applicantCountries || [],
+            jobLocationAddress: result.jobLocationAddress || {},
             fetchedAt: nowIso(),
           };
           builtInEnrichment.fetched++;
-          if (result.employmentType && !job.employmentType) {
-            job.employmentType = result.employmentType;
-          }
-          if (result.datePosted && !job.postedAt) {
-            job.postedAt = result.datePosted;
-          }
-          if (result.salary && !job.salary) {
-            job.salary = result.salary;
-          }
-          // Check newly fetched description for remote signals
-          if (job.workMode !== 'Remote') {
-            const desc = result.description.slice(0, 3000).toLowerCase();
-            if (REMOTE_SIGNAL_PATTERNS.some(p => p.test(desc))) {
-              job.workMode = 'Remote';
-              preLocationMap.set(index, computeLocationOk(job));
-            }
-          }
-          log.info(`Built In enriched: "${job.title}" at ${job.company} (${result.description.length} chars)`);
+          applyBuiltInStructuredData(job, result, index, preLocationMap);
+          log.info(`Built In enriched: "${job.title}" at ${job.company} (${result.description.length} chars, country=${result.jobLocationAddress?.addressCountry || '?'})`);
         } else {
           builtInEnrichment.failed++;
           builtInEnrichment.failedUrls.push(url);
@@ -1290,6 +1390,16 @@ Actor.main(async () => {
       // Delay between fetches to avoid anti-bot measures
       await sleep(BUILTIN_FETCH_DELAY_MS);
     }
+
+    // Add jobs discovered as expired during enrichment to the preExpiredSet
+    let biExpiredCount = 0;
+    for (const { job, index } of builtInJobsToEnrich) {
+      if (job._expired && !preExpiredSet.has(index)) {
+        preExpiredSet.add(index);
+        biExpiredCount++;
+      }
+    }
+    if (biExpiredCount > 0) log.info(`Built In enrichment: ${biExpiredCount} additional expired jobs found via validThrough.`);
 
     log.info(`Built In enrichment done: ${builtInEnrichment.fetched} fetched, ${builtInEnrichment.cached} cached, ${builtInEnrichment.failed} failed.`);
   }
