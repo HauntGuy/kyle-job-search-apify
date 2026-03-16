@@ -924,8 +924,12 @@ function normalizeFantasticFeed(sourceId, raw) {
   const locType = String(raw.location_type || '').toLowerCase();
   const aiExplicitNonRemote = aiWA.includes('on-site') || aiWA.includes('on site') || aiWA.includes('hybrid');
   const telecommuteSignal = locType === 'telecommute' && !aiExplicitNonRemote;
-  const remote = !!raw.remote_derived || waD.includes('remote') || aiWA.includes('remote') || telecommuteSignal;
-  const hybrid = !!raw.hybrid_derived || waD.includes('hybrid') || aiWA.includes('hybrid');
+  // "Remote OK" / "Remote Flexible" means hybrid/flexible, not fully remote.
+  // Only "Remote" or "Remote Solely" mean the job is actually remote.
+  const aiWAIsRemote = aiWA.includes('remote') && !aiWA.includes('remote ok') && !aiWA.includes('remote flexible');
+  const aiWAIsHybrid = aiWA.includes('hybrid') || aiWA.includes('remote ok') || aiWA.includes('remote flexible');
+  const remote = !!raw.remote_derived || waD.includes('remote') || aiWAIsRemote || telecommuteSignal;
+  const hybrid = !!raw.hybrid_derived || waD.includes('hybrid') || aiWAIsHybrid;
 
   const locParts = [];
   if (remote) locParts.push('Remote');
