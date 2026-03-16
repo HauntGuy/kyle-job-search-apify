@@ -914,13 +914,17 @@ function normalizeFantasticFeed(sourceId, raw) {
   // Extract country hint from raw metadata (source_domain, location_requirements_raw, addressCountry)
   const countryHint = _extractCountryHint(raw);
 
-  // Check multiple sources for remote/hybrid status — remote_derived is unreliable for LinkedIn jobs.
-  // LinkedIn's "Remote" bubble maps to location_type='TELECOMMUTE' in structured data,
-  // but the scraper doesn't always populate remote_derived from it.
+  // Check multiple sources for remote/hybrid status.
+  // ai_work_arrangement is Fantastic's AI analysis of the actual description — most reliable.
+  // location_type='TELECOMMUTE' comes from schema.org markup in the ATS, but some employers
+  // set TELECOMMUTE to mean "we accept remote applications" even for on-site/hybrid roles.
+  // When ai_work_arrangement explicitly says on-site or hybrid, it overrides location_type.
   const aiWA = String(raw.ai_work_arrangement || '').toLowerCase();
   const waD = String(raw.work_arrangement_derived || '').toLowerCase();
   const locType = String(raw.location_type || '').toLowerCase();
-  const remote = !!raw.remote_derived || waD.includes('remote') || aiWA.includes('remote') || locType === 'telecommute';
+  const aiExplicitNonRemote = aiWA.includes('on-site') || aiWA.includes('on site') || aiWA.includes('hybrid');
+  const telecommuteSignal = locType === 'telecommute' && !aiExplicitNonRemote;
+  const remote = !!raw.remote_derived || waD.includes('remote') || aiWA.includes('remote') || telecommuteSignal;
   const hybrid = !!raw.hybrid_derived || waD.includes('hybrid') || aiWA.includes('hybrid');
 
   const locParts = [];
