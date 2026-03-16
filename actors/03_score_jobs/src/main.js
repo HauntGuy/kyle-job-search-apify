@@ -341,6 +341,8 @@ function lookupCache(cacheMap, job) {
  * Remote jobs are NEVER disqualified by location — Kyle can work any remote job.
  */
 function computeLocationOk(job) {
+  // If applicantLocationRequirements explicitly excludes US, reject even if Remote
+  if (job._usExcluded) return 'no';
   if (String(job.workMode || '') === 'Remote') return 'yes';
   if (job.commutable === true) return 'yes';
   if (job.commutable === false) return 'no';
@@ -447,9 +449,11 @@ function applyBuiltInStructuredData(job, data, index, preLocationMap) {
   }
 
   // applicantLocationRequirements: if USA is not listed, job is not for US applicants
+  // This rejects the job even if marked Remote — the employer restricts to specific countries
   const appCountries = data.applicantCountries || [];
   if (appCountries.length > 0 && !appCountries.includes('USA') && !appCountries.includes('US')) {
     job.commutable = false;
+    job._usExcluded = true;
     // Update location to the first listed country if we don't have a better one
     if (!job.location || job.location === '') {
       job.location = appCountries[0]; // Already ISO3 from Built In
@@ -1349,9 +1353,10 @@ Actor.main(async () => {
       const url = job.url || job.applyUrl;
       if (!url) { builtInEnrichment.failed++; continue; }
 
-      // Check cache first
+      // Check cache first (re-fetch if missing structured data fields added in v10)
       const cached = builtInDescCache[url];
-      if (cached?.description) {
+      const cacheHasStructuredData = cached && ('applicantCountries' in cached || 'jobLocationAddress' in cached);
+      if (cached?.description && cacheHasStructuredData) {
         job.description = cached.description;
         applyBuiltInStructuredData(job, cached, index, preLocationMap);
         builtInEnrichment.cached++;
