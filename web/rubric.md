@@ -1,4 +1,4 @@
-# Rubric: Kyle job search (v20)
+# Rubric: Kyle job search (v21)
 
 Evaluate a job posting for **Kyle Forgaard**. Return JSON with: `accept` (bool), `score` (0–100), `confidence` (0.0–1.0), `reason_short` (1 sentence), `reasons` (short bullets), `red_flags` (short bullets), `tags` (short tags), `salary_extracted` (string or ""), `company_url` (string or ""), `role` (array from: "Game Designer", "Programmer", "EdTech", "App Support", "Customer Success" — may combine). **`role` rules:** Use "Programmer" ONLY for roles where the primary job duty is writing code (Unity dev, C# dev, gameplay engineer). Solutions Engineer, Sales Engineer, Implementation roles, and Support roles are NOT "Programmer" — classify them as "Customer Success" or "App Support".
 
@@ -51,7 +51,7 @@ Tier 3 at a real tech company with acceptable salary → score 70–80. Do not p
 
 ## Deal-breakers (accept=false)
 
-- Backend technologies required (ASP.NET, Node.js, TypeScript, REST APIs, SQL, ODBC, JDBC, etc.) / full-stack-primary / React-heavy
+- Backend technologies required (ASP.NET, Node.js, TypeScript, REST APIs, SQL, ODBC, JDBC, etc.) / full-stack / React-heavy
 - VR/XR/AR required (optional mention OK)
 - Android SDK / native Android game dev required
 - Military / defense / weapons (general simulation OK)

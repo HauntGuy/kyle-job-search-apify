@@ -189,7 +189,7 @@ async function callOpenAIJson({ apiKey, model, messages, maxOutputTokens = 700, 
     input: messages,
     ...(isGpt5
       ? { reasoning: { effort: 'medium' } }
-      : { temperature: 0.2 }),
+      : { temperature: 0 }),
     max_output_tokens: effectiveMaxTokens,
     text: { format: { type: 'json_object' } },
   };
@@ -1166,6 +1166,10 @@ Actor.main(async () => {
   const model = String(scoringCfg.model || 'gpt-4o-mini');
   const threshold = Number(scoringCfg.threshold ?? 70) || 70;
   const gateOnLocation = !!scoringCfg.gateOnLocation;
+  // Debug: capture full LLM prompt+response for specific job IDs (array in config.scoring.debugJobIds)
+  const debugJobIds = new Set(Array.isArray(scoringCfg.debugJobIds) ? scoringCfg.debugJobIds : []);
+  if (debugJobIds.size) log.info(`LLM debug enabled for ${debugJobIds.size} job IDs: ${[...debugJobIds].join(', ')}`);
+  const debugLlmResults = [];  // collected during scoring, written to KV at end
   const rawConcurrency = Number(scoringCfg.concurrency ?? 4) || 4;
   // Reasoning models (GPT-5+) hold connections open much longer (10-30s vs 1-2s).
   // Cap concurrency at 4 to reduce ECONNRESET / socket errors.
@@ -1731,6 +1735,19 @@ Actor.main(async () => {
     // LLM call — errors propagate to processWithRetries for retry handling
     const evaluation = await callOpenAIJson({ apiKey, model, messages, stats: openAiStats });
 
+    // Debug: capture full prompt+response for specific jobs
+    const isDebugJob = jobIdList.some(id => debugJobIds.has(id));
+    if (isDebugJob) {
+      debugLlmResults.push({
+        jobIds: jobIdList,
+        title: job.title,
+        company: job.company,
+        prompt: messages,
+        response: evaluation,
+      });
+      log.info(`[DEBUG] Captured LLM prompt+response for ${job.title} (${jobIdList.join(', ')})`);
+    }
+
     const score = toInt(evaluation.score ?? evaluation.Score ?? 0, 0);
     const accept = !!(evaluation.accept ?? evaluation.Accept);
 
@@ -2174,6 +2191,12 @@ Actor.main(async () => {
   }
 
   await kv.setValue('scoring_report.json', report);
+
+  // Write debug LLM data if any jobs were captured
+  if (debugLlmResults.length) {
+    await kv.setValue('debug_llm.json', { capturedAt: nowIso(), jobs: debugLlmResults });
+    log.info(`Wrote debug_llm.json with ${debugLlmResults.length} captured LLM interactions.`);
+  }
 
   // Write score_cache.json for next run's LLM cache + LinkedIn cache
   await kv.setValue('score_cache.json', {
