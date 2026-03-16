@@ -141,6 +141,8 @@ function countryNameToIso3(name) {
   const low = (name || '').toLowerCase();
   if (low === 'england' || low === 'scotland' || low === 'wales') return 'GBR';
   if (low === 'czechia') return 'CZE';
+  // Inverted/alternate names from HRIS systems
+  if (low === 'korea republic of' || low === 'republic of korea' || low === 'south korea') return 'KOR';
   return null;
 }
 
@@ -293,12 +295,34 @@ function _stripWorkMode(raw) {
   // Trailing "(Remote)", "(Onsite)", etc.
   s = s.replace(/\s*\((remote|hybrid|on[- ]?site|in[- ]?office|in[- ]?person|onsite)\)\s*/ig, '');
   // Standalone work mode words
-  s = s.replace(/\b(remote|hybrid|on[- ]?site|in[- ]?office|in[- ]?person|onsite)\b/ig, '');
+  s = s.replace(/\b(remote|hybrid|on[- ]?site|in[- ]?office|in[- ]?person|onsite|flexible)\b/ig, '');
   // "Office" suffix (e.g., "Warsaw Office" -> "Warsaw")
   s = s.replace(/\s+[Oo]ffice\s*$/, '');
   // Strip parenthesized timezone hints (e.g., "(CET ±2h)", "(GMT+1)")
   s = s.replace(/\s*\((?:CET|GMT|EST|PST|UTC)[^)]*\)\s*/ig, '');
-  // Clean up leftover delimiters
+  // Smart parenthetical handling: check if parens contain a location keyword.
+  // If so, extract the location content; otherwise strip as noise.
+  // Examples: "Second Dinner (us )" → keep "us"; "Bengaluru India (zynga Office)" → strip parens.
+  s = s.replace(/\s*\(([^)]*)\)\s*/g, (match, inner) => {
+    const trimmed = inner.trim().toLowerCase();
+    // Check for domestic signals
+    if (US_DOMESTIC.has(trimmed)) return `, ${inner.trim()} `;
+    // Check for US state name or abbreviation
+    if (trimmed in STATE_NAME_TO_ABBREV || (trimmed.length === 2 && US_STATE_ABBREVS.has(trimmed.toUpperCase()))) {
+      return `, ${inner.trim()} `;
+    }
+    // Check for "in <location>" pattern (e.g., "(in British Columbia)")
+    const inMatch = trimmed.match(/^in\s+(.+)/);
+    if (inMatch) return `, ${inMatch[1].trim()} `;
+    // Check for country name
+    const asCountry = countryNameToIso3(_titleCase(trimmed)) || countryNameToIso3(_titleCase(_stripDiacritics(trimmed)));
+    if (asCountry) return `, ${inner.trim()} `;
+    // No location keyword found — strip as noise
+    return ' ';
+  });
+  // Strip zip/postal codes (e.g., "Seoul 06164" → "Seoul")
+  s = s.replace(/\b\d{4,6}\b/g, '');
+  // Clean up leftover delimiters and junk
   s = s.replace(/\s*[|/,\-:]\s*$/, '').replace(/^\s*[|/,\-:]\s*/, '');
   return s.trim();
 }
@@ -344,8 +368,8 @@ function _classifyToken(token) {
     return { type: 'usState', abbrev: STATE_NAME_TO_ABBREV[lower] };
   }
 
-  // Foreign country name (single word)
-  const asCountry = countryNameToIso3(_titleCase(trimmed));
+  // Foreign country name (single word) — try with and without diacritics (e.g., "México" → "Mexico")
+  const asCountry = countryNameToIso3(_titleCase(trimmed)) || countryNameToIso3(_titleCase(_stripDiacritics(trimmed)));
   if (asCountry) return { type: 'foreignCountry', iso3: asCountry };
 
   // Foreign region name
@@ -455,13 +479,18 @@ function _classifySegment(segment) {
  *
  * Returns { workMode, location, commutable }
  */
-function normalizeLocationFields(rawLocation) {
+function normalizeLocationFields(rawLocation, options) {
   if (!rawLocation || typeof rawLocation !== 'string' || !rawLocation.trim()) {
     return { workMode: '', location: '', commutable: null };
   }
   const raw = rawLocation.trim();
   const rawWm = _detectWorkModeRaw(raw);
   let geo = _stripWorkMode(raw);
+
+  // Optional country hint (ISO2, e.g., "GE") from upstream source metadata.
+  // When present and non-US, overrides false "United States" domestic signals
+  // (e.g., Fantastic scraper geocoding Georgia-the-country as "Georgia, United States").
+  const countryHint = options?.countryHint?.toUpperCase() || null;
 
   // Determine work mode
   let workMode = '';
@@ -476,6 +505,27 @@ function normalizeLocationFields(rawLocation) {
   // Multi-location: pick first (e.g., "Boston; New York; Chicago", "Austin | Dallas")
   const multiLocParts = geo.split(/[;|/]/).map(s => s.trim()).filter(Boolean);
   if (multiLocParts.length > 1) geo = multiLocParts[0];
+
+  // Pre-process hyphenated HRIS location codes from corporate job systems.
+  // Examples: "Us-california-irvine", "Usa-tx-austin-12515researchbldg7",
+  //           "Can-qc-montreal-rue St-hubert", "Intl-india-bengaluru"
+  // Also handle "Us - Bellevue" (dash with spaces).
+  // Strategy: if the first hyphen-segment is a recognizable country/domestic token,
+  // split on hyphens (or " - ") and rejoin with commas, dropping address/junk suffixes.
+  const dashParts = geo.split(/\s*-\s*/).filter(Boolean);
+  if (dashParts.length >= 2) {
+    const firstLow = dashParts[0].toLowerCase().trim();
+    const isDomestic = ['us', 'usa'].includes(firstLow);
+    const isKnownCountry = isDomestic || ['can', 'intl', 'international', 'irl', 'gbr', 'gb', 'deu', 'de', 'fra', 'fr', 'aus', 'jpn', 'ind', 'new'].includes(firstLow)
+      || countryNameToIso3(_titleCase(firstLow))
+      || (firstLow.length === 2 && iso2ToIso3Foreign(firstLow.toUpperCase()))
+      || (firstLow.length === 3 && isIso3Foreign(firstLow.toUpperCase()));
+    if (isKnownCountry) {
+      // Drop segments that look like street addresses (start with digits, contain "bldg", "pkwy", etc.)
+      const cleaned = dashParts.filter(p => !/^\d/.test(p.trim()) && !/(?:bldg|pkwy|ave|blvd|rue|str|plaza|via)\b/i.test(p));
+      geo = cleaned.join(', ');
+    }
+  }
 
   // --- Split on commas for positional parsing ---
   const segments = geo.split(',').map(s => s.trim()).filter(Boolean);
@@ -563,6 +613,22 @@ function normalizeLocationFields(rawLocation) {
     ? _titleCase(cityParts.join(' ').trim())
     : '';
 
+  // Country hint override: if upstream metadata says the country is NOT the US,
+  // don't let a false "United States" domestic signal promote an ambiguous state.
+  // Example: Fantastic scraper geocodes Georgia (country) as "Georgia, United States".
+  if (countryHint && countryHint !== 'US' && countryHint !== 'USA') {
+    if (ambiguousState && foundDomestic) {
+      // The domestic signal is wrong — resolve the ambiguous name as a foreign country.
+      const iso3 = isoCountries.alpha2ToAlpha3(countryHint);
+      if (iso3) {
+        return { workMode, location: iso3, commutable: false };
+      }
+    }
+    // Even without an ambiguous state, a non-US hint + domestic signal is contradictory.
+    // Trust the hint: clear the domestic flag so downstream resolution doesn't assume US.
+    foundDomestic = false;
+  }
+
   // Promote ambiguous state when domestic signal confirms US (e.g., "Atlanta, Georgia, United States")
   if (ambiguousState && foundDomestic && !foundState) {
     foundState = { abbrev: ambiguousState.abbrev };
@@ -640,6 +706,57 @@ function normalizeLocationFields(rawLocation) {
   return { workMode, location: geo.trim(), commutable: null };
 }
 
+// --------------- Country Hint Extraction ---------------
+
+/**
+ * Extract a country hint (ISO2 code) from Fantastic/LinkedIn raw metadata.
+ * Used to override false domestic signals (e.g., Georgia-the-country geocoded as "Georgia, United States").
+ *
+ * Signals checked (in priority order):
+ * 1. source_domain: "ge.linkedin.com" → "GE"  (LinkedIn country subdomain)
+ * 2. location_requirements_raw: @type "Country" with bare country name → country ISO2
+ * 3. locations_raw[0].address.addressCountry: "US" or empty
+ *
+ * Returns ISO2 string (e.g., "GE", "US") or null if no signal found.
+ */
+function _extractCountryHint(raw) {
+  // Signal 1: LinkedIn country-code subdomain (e.g., ge.linkedin.com, es.linkedin.com)
+  const domain = String(raw.source_domain || raw.url || '');
+  const subdomainMatch = domain.match(/^(?:https?:\/\/)?([a-z]{2})\.linkedin\.com/i);
+  if (subdomainMatch) {
+    const code = subdomainMatch[1].toUpperCase();
+    // "www" is not a country code; standard LinkedIn domains (linkedin.com, www.linkedin.com) are not hints
+    if (code !== 'WW' && code.length === 2) return code;
+  }
+
+  // Signal 2: location_requirements_raw with @type "Country" (Fantastic/Workable sources)
+  const locReqs = asArray(raw.location_requirements_raw).filter(Boolean);
+  for (const req of locReqs) {
+    if (req?.['@type'] === 'Country' && req?.name) {
+      const name = String(req.name).trim();
+      // "Georgia, United States" → US (scraper thinks it's US); bare "Georgia" → GEO
+      if (/united states/i.test(name)) return 'US';
+      // Try to resolve the country name to ISO2
+      const iso3 = countryNameToIso3(name);
+      if (iso3) {
+        const iso2 = isoCountries.alpha3ToAlpha2(iso3);
+        if (iso2) return iso2;
+      }
+    }
+  }
+
+  // Signal 3: addressCountry from locations_raw
+  const locsRaw = asArray(raw.locations_raw).filter(Boolean);
+  for (const loc of locsRaw) {
+    const ac = loc?.address?.addressCountry;
+    if (ac && typeof ac === 'string' && ac.trim().length === 2) {
+      return ac.trim().toUpperCase();
+    }
+  }
+
+  return null;
+}
+
 // --------------- Source Normalizers ---------------
 
 function normalizeGeneric(sourceId, raw) {
@@ -683,6 +800,9 @@ function normalizeFantasticFeed(sourceId, raw) {
 
   const locationsDerived = asArray(raw.locations_derived).filter(Boolean);
   const locationsRaw = asArray(raw.locations_raw).filter(Boolean);
+
+  // Extract country hint from raw metadata (source_domain, location_requirements_raw, addressCountry)
+  const countryHint = _extractCountryHint(raw);
 
   // Check multiple sources for remote/hybrid status — remote_derived is unreliable for LinkedIn jobs.
   // LinkedIn's "Remote" bubble maps to location_type='TELECOMMUTE' in structured data,
@@ -728,6 +848,7 @@ function normalizeFantasticFeed(sourceId, raw) {
     description,
     salary,
     employmentType,
+    countryHint: countryHint || undefined,
     raw,
   };
 
@@ -1915,7 +2036,7 @@ Actor.main(async () => {
         job.searchTerms = searchTerms;
 
         // Normalize location into separate workMode + location + commutable fields
-        const { workMode, location, commutable } = normalizeLocationFields(job.location);
+        const { workMode, location, commutable } = normalizeLocationFields(job.location, { countryHint: job.countryHint });
         job.workMode = workMode;
         job.location = location;
         job.commutable = commutable;
