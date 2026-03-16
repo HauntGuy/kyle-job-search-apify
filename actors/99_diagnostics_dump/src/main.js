@@ -228,6 +228,12 @@ Actor.main(async () => {
   for (const cw of capWarnings) {
     warningBanners.push(`⚠️ ${cw.sourceId}: ${cw.detail}`);
   }
+  // Salary notes (garbage removed, non-USD detected)
+  const salaryNotes = Array.isArray(scoringReport?.salaryNotes) ? scoringReport.salaryNotes : [];
+  for (const sn of salaryNotes) {
+    warningBanners.push(`ℹ️ ${sn}`);
+  }
+
   const bannersHtml = warningBanners.map(
     (msg) => `<div style="background:#fff3cd;border:2px solid #ffc107;border-radius:8px;padding:12px 16px;margin-bottom:8px;font-size:16px;"><b>${escHtml(msg)}</b></div>`
   ).join('\n');

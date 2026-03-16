@@ -112,10 +112,19 @@ Actor.main(async () => {
     durationLine = `<b>Duration:</b> ${durMin} min | <b>Status:</b> ${status}`;
   }
 
+  // Salary notes from scorer (garbage removed, non-USD detected, etc.)
+  let salaryNotesHtml = '';
+  const salaryNotes = Array.isArray(scoringReport?.salaryNotes) ? scoringReport.salaryNotes : [];
+  if (salaryNotes.length > 0) {
+    const lines = salaryNotes.map(n => `• ${n}`).join('<br/>');
+    salaryNotesHtml = `<div style="background:#e8f4fd;border:2px solid #2196F3;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:14px;"><b>ℹ️ Salary notes:</b><br/>${lines}</div>`;
+  }
+
   const html = `
     <div style="font-family: Arial, sans-serif;">
       ${unscoredWarning}
       ${capWarningsHtml}
+      ${salaryNotesHtml}
       <h2>Job Search Results</h2>
       <p><b>Accepted:</b> ${acceptedCount}<br/>
          <b>Scored:</b> ${totalScored}

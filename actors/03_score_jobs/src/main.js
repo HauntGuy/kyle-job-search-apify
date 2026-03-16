@@ -792,30 +792,163 @@ function ensureProtocol(url) {
   return s;
 }
 
-function formatSalary(raw) {
-  if (!raw && raw !== 0) return '';
-  const s = String(raw).trim();
-  if (!s) return '';
+/**
+ * Standardize a salary string into consistent formats:
+ *   Hourly:  "$50 - $120/hr"
+ *   Annual:  "$66K - $89K/yr"
+ *   Monthly: "$5K - $8K/mo"
+ *
+ * Returns { display: string, note: string|null }
+ *   display = cleaned salary string (or '' if garbage)
+ *   note = warning string if non-USD or garbage detected (for email/diagnostics)
+ */
+function standardizeSalary(raw, company, title) {
+  if (!raw && raw !== 0) return { display: '', note: null };
+  // Collapse whitespace (newlines, tabs, multi-spaces) into single spaces
+  const s = String(raw).replace(/\s+/g, ' ').trim();
+  if (!s) return { display: '', note: null };
 
-  // Already formatted (contains $ or k) — pass through
-  if (/[$k]/i.test(s)) return s;
+  const jobLabel = `${company || '?'} — ${title || '?'}`;
 
-  // Range like "90000-120000" or "90000 - 120000"
-  const rangeMatch = s.match(/^(\d{4,})\s*[-–—]\s*(\d{4,})$/);
+  // --- Detect garbage: no digits at all, or suspiciously low numbers with no context ---
+  // e.g., "1-3 Annually"
+  const digitCount = (s.match(/\d/g) || []).length;
+  if (digitCount === 0) {
+    return { display: '', note: `Garbage salary removed for ${jobLabel}: "${s}"` };
+  }
+  // Numbers where the max is < 100 and it says "annually" → garbage
+  const garbageMatch = s.match(/^(\d{1,2})\s*[-–—]\s*(\d{1,2})\s*(?:annually|yearly|per\s*year)/i);
+  if (garbageMatch && Number(garbageMatch[2]) < 100) {
+    return { display: '', note: `Garbage salary removed for ${jobLabel}: "${s}"` };
+  }
+
+  // --- Detect currency ---
+  // If no $ symbol present but has digits, might be non-USD
+  const hasDollar = s.includes('$');
+  const hasEuro = s.includes('€');
+  const hasPound = s.includes('£');
+  const hasExplicitUSD = /\bUSD\b/i.test(s);
+  const hasExplicitCurrency = /\b(EUR|GBP|CAD|AUD|JPY|SEK|NOK|DKK|CHF|INR|IDR|PLN|RON|BRL|MXN|SGD|NZD|ZAR)\b/i.test(s);
+  const currencySymbol = hasDollar || hasExplicitUSD ? '$'
+    : hasEuro ? '€'
+    : hasPound ? '£'
+    : '';
+  const nonUsdNote = (!hasDollar && !hasExplicitUSD && !hasEuro && !hasPound && !hasExplicitCurrency && digitCount >= 2)
+    ? null  // No currency info at all — assume USD and add $
+    : (hasEuro || hasPound || hasExplicitCurrency)
+      ? `Non-USD salary for ${jobLabel}: "${s}"`
+      : null;
+
+  // Determine the prefix to use: if original had $, €, or £ we use it; if it had
+  // explicit "USD" we use "$"; if NO currency indicator at all, we assume USD and use "$".
+  // If non-USD currency, leave symbol off (use '').
+  const prefix = (hasEuro || hasPound || hasExplicitCurrency) ? '' : '$';
+
+  // --- Parse the salary string ---
+  // Remove currency words/symbols for easier parsing
+  let cleaned = s
+    .replace(/(?:USD|EUR|GBP|CAD|AUD)\s*/gi, '')
+    .replace(/[$€£]/g, '')
+    .trim();
+
+  // Detect period suffix: /yr, /hr, /mo, annually, hourly, per hour, per year, etc.
+  let period = '';
+  const periodMatch = cleaned.match(/(?:\/\s*|per\s*)(yr|year|annually|annual|hr|hour|hourly|mo|month|monthly)/i);
+  if (periodMatch) {
+    const p = periodMatch[1].toLowerCase();
+    if (p.startsWith('yr') || p.startsWith('year') || p.startsWith('annual')) period = '/yr';
+    else if (p.startsWith('hr') || p.startsWith('hour')) period = '/hr';
+    else if (p.startsWith('mo') || p.startsWith('month')) period = '/mo';
+  }
+  if (!period && /\bannually\b|\bper\s*year\b|\b\/yr\b|\byear\b/i.test(cleaned)) period = '/yr';
+  if (!period && /\bhourly\b|\bper\s*hour\b|\b\/hr\b/i.test(cleaned)) period = '/hr';
+  if (!period && /\bmonthly\b|\bper\s*month\b|\b\/mo\b/i.test(cleaned)) period = '/mo';
+
+  // Strip period text for number parsing
+  cleaned = cleaned
+    .replace(/\s*(?:\/\s*)?(?:yr|year|annually|annual|hr|hour|hourly|mo|month|monthly|per\s*(?:year|hour|month|annum))\b/gi, '')
+    .replace(/\s*(?:a\s+year|an\s+hour)\b/gi, '')
+    .trim();
+
+  // Extract numbers — handle "120K", "120,000", "120000", "120000.00", "120000.0"
+  function parseNum(str) {
+    let n = str.replace(/,/g, '').trim();
+    const kMatch = n.match(/^([\d.]+)\s*[kK]$/);
+    if (kMatch) return Number(kMatch[1]) * 1000;
+    return Number(n);
+  }
+
+  // Try range: "120K-170K", "120,000 - 170,000", "$50.00 - $120.00", "120000.0 - 230000.0"
+  const rangeMatch = cleaned.match(/([\d,.]+\s*[kK]?)\s*[-–—]\s*([\d,.]+\s*[kK]?)/);
   if (rangeMatch) {
-    const lo = Number(rangeMatch[1]).toLocaleString('en-US');
-    const hi = Number(rangeMatch[2]).toLocaleString('en-US');
-    return `$${lo}–$${hi}`;
+    let lo = parseNum(rangeMatch[1]);
+    let hi = parseNum(rangeMatch[2]);
+    if (Number.isFinite(lo) && Number.isFinite(hi) && lo > 0 && hi > 0) {
+      // Infer period from magnitude if not explicit
+      if (!period) {
+        if (hi >= 10000) period = '/yr';
+        else if (hi < 500) period = '/hr';
+      }
+      const result = formatRange(lo, hi, period, prefix);
+      return { display: result, note: nonUsdNote };
+    }
   }
 
-  // Plain number like "135000"
-  const num = Number(s);
-  if (Number.isFinite(num) && num >= 1000) {
-    return `$${num.toLocaleString('en-US')}`;
+  // Try single value: "120K", "135000", "Up to $200,000"
+  const upToMatch = cleaned.match(/up\s+to\s+([\d,.]+\s*[kK]?)/i);
+  const singleMatch = upToMatch || cleaned.match(/^([\d,.]+\s*[kK]?)$/);
+  if (singleMatch) {
+    const val = parseNum(singleMatch[1]);
+    if (Number.isFinite(val) && val > 0) {
+      if (!period) {
+        if (val >= 10000) period = '/yr';
+        else if (val < 500) period = '/hr';
+      }
+      const formatted = formatSingleAmount(val, period, prefix);
+      const label = upToMatch ? `Up to ${formatted}` : formatted;
+      return { display: label, note: nonUsdNote };
+    }
   }
 
-  // Anything else — pass through as-is
-  return s;
+  // Fallback: if we can't parse it but it has digits, pass through cleaned version
+  // but still remove ".00" cents
+  let fallback = s.replace(/\.00\b/g, '').replace(/\s+/g, ' ').trim();
+  return { display: fallback, note: nonUsdNote };
+}
+
+/** Format a numeric amount for display: "$120K" or "$50" */
+function formatSingleAmount(val, period, prefix) {
+  if (period === '/yr' || period === '/mo') {
+    // Annual/monthly: use K notation if >= 1000
+    if (val >= 1000) {
+      const k = val / 1000;
+      const kStr = k === Math.floor(k) ? String(Math.floor(k)) : k.toFixed(1).replace(/\.0$/, '');
+      return `${prefix}${kStr}K${period}`;
+    }
+    return `${prefix}${Math.round(val)}${period}`;
+  }
+  // Hourly: plain number, remove .00 cents
+  const rounded = val === Math.floor(val) ? String(Math.floor(val)) : val.toFixed(2).replace(/\.00$/, '');
+  return `${prefix}${rounded}${period}`;
+}
+
+/** Format a range: "$50 - $120/hr" or "$120K - $170K/yr" */
+function formatRange(lo, hi, period, prefix) {
+  if (period === '/yr' || period === '/mo') {
+    // Use K notation if both values are >= 1000
+    if (lo >= 1000 && hi >= 1000) {
+      const loK = lo / 1000;
+      const hiK = hi / 1000;
+      const loStr = loK === Math.floor(loK) ? String(Math.floor(loK)) : loK.toFixed(1).replace(/\.0$/, '');
+      const hiStr = hiK === Math.floor(hiK) ? String(Math.floor(hiK)) : hiK.toFixed(1).replace(/\.0$/, '');
+      return `${prefix}${loStr}K - ${prefix}${hiStr}K${period}`;
+    }
+    return `${prefix}${Math.round(lo)} - ${prefix}${Math.round(hi)}${period}`;
+  }
+  // Hourly: plain numbers
+  const loStr = lo === Math.floor(lo) ? String(Math.floor(lo)) : lo.toFixed(2).replace(/\.00$/, '');
+  const hiStr = hi === Math.floor(hi) ? String(Math.floor(hi)) : hi.toFixed(2).replace(/\.00$/, '');
+  return `${prefix}${loStr} - ${prefix}${hiStr}${period}`;
 }
 
 /**
@@ -1079,7 +1212,8 @@ async function buildScoredXlsx(jobs, {
     const redFlags = Array.isArray(ev.red_flags) ? ev.red_flags.join(' ') : '';
     const roleStr = Array.isArray(ev.role) ? ev.role.join(', ') : (ev.role || '');
 
-    const salary = formatSalary(j.salary || ev.salary_extracted || '');
+    const salResult = standardizeSalary(j.salary || ev.salary_extracted || '', j.company, j.title);
+    const salary = salResult.display;
     const score = ev.score ?? 0;
     const ageDays = calculateAgeDays(j.earliestPostedAt || j.postedAt);
     const sourcesArr = Array.isArray(j.sources) ? j.sources : [j.source].filter(Boolean);
@@ -2075,6 +2209,26 @@ Actor.main(async () => {
     log.info(`Salary scrape done: ${salaryEnrichment.found} found, ${salaryEnrichment.failed} failed out of ${salaryEnrichment.attempted} attempted.`);
   }
 
+  // --- Standardize salary fields on accepted jobs and collect notes ---
+  const salaryNotes = [];
+  for (const job of acceptedJobs) {
+    const rawSal = job.salary || job.evaluation?.salary_extracted || '';
+    if (!rawSal) continue;
+    const { display, note } = standardizeSalary(rawSal, job.company, job.title);
+    // Write standardized salary back to BOTH fields so XLSX builder picks it up
+    job.salary = display;
+    if (job.evaluation?.salary_extracted) {
+      job.evaluation.salary_extracted = display;
+    }
+    if (note) {
+      salaryNotes.push(note);
+      log.info(`Salary note: ${note}`);
+    }
+  }
+  if (salaryNotes.length > 0) {
+    log.info(`Salary standardization: ${salaryNotes.length} note(s) generated.`);
+  }
+
   // Build accepted.xlsx + scored.xlsx (Excel format with hyperlinks, frozen panes, bold headers)
   const xlsxContentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
@@ -2151,6 +2305,7 @@ Actor.main(async () => {
       remoteFound: linkedinEnrichment.remoteFound,
     },
     salaryEnrichment,
+    salaryNotes,
     threshold,
     gateOnLocation,
     model,
