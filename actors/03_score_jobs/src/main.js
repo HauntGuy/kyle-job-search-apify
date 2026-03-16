@@ -280,7 +280,7 @@ function truncate(s, maxChars) {
 
 // --------------- Score cache helpers ---------------
 
-const SCORING_FORMAT_VERSION = 'v10'; // v10: replaced foreign with commutable; normalizeJob in collector; enrichDescriptions in scorer
+const SCORING_FORMAT_VERSION = 'v11'; // v11: fix applicantLocationRequirements for Remote jobs; blocklist; Built In JSON-LD enrichment
 
 function extractRubricVersion(rubricText) {
   const match = String(rubricText || '').match(/^#\s+Rubric:.*?\((v\d+)\)/i);
