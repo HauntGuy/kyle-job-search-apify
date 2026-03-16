@@ -486,8 +486,34 @@ function stripHtmlTags(html) {
 }
 
 /**
+ * Format a schema.org baseSalary object into a human-readable string.
+ * Handles MonetaryAmount with QuantitativeValue, plain numbers, and strings.
+ */
+function formatBaseSalary(baseSalary) {
+  if (!baseSalary) return '';
+  if (typeof baseSalary === 'string') return baseSalary;
+  if (typeof baseSalary === 'number') return `$${baseSalary.toLocaleString()}`;
+  // MonetaryAmount: { currency, value: { minValue, maxValue, unitText } }
+  const currency = baseSalary.currency || 'USD';
+  const sym = currency === 'USD' ? '$' : currency === 'GBP' ? '£' : currency === 'EUR' ? '€' : `${currency} `;
+  const val = baseSalary.value || baseSalary;
+  if (typeof val === 'number') return `${sym}${val.toLocaleString()}`;
+  const min = val.minValue ?? val.min;
+  const max = val.maxValue ?? val.max;
+  const unit = val.unitText || baseSalary.unitText || '';
+  const unitSuffix = unit.toLowerCase().startsWith('year') ? '/yr'
+    : unit.toLowerCase().startsWith('hour') ? '/hr'
+    : unit.toLowerCase().startsWith('month') ? '/mo'
+    : unit ? `/${unit}` : '';
+  if (min != null && max != null) return `${sym}${Number(min).toLocaleString()}-${sym}${Number(max).toLocaleString()}${unitSuffix}`;
+  if (min != null) return `${sym}${Number(min).toLocaleString()}+${unitSuffix}`;
+  if (max != null) return `Up to ${sym}${Number(max).toLocaleString()}${unitSuffix}`;
+  return '';
+}
+
+/**
  * Fetch a Built In job page and extract the description from JSON-LD structured data.
- * Returns { description, employmentType } or null if not found.
+ * Returns { description, employmentType, datePosted, salary } or null if not found.
  */
 async function fetchBuiltInDescription(url) {
   const res = await fetch(url, {
@@ -523,6 +549,8 @@ async function fetchBuiltInDescription(url) {
           return {
             description: stripHtmlTags(posting.description),
             employmentType: posting.employmentType || '',
+            datePosted: posting.datePosted || '',
+            salary: formatBaseSalary(posting.baseSalary) || '',
           };
         }
       }
@@ -542,11 +570,23 @@ async function fetchBuiltInDescription(url) {
 function formatLocationForDisplay(job, combineWorkMode = false) {
   const loc = String(job.location || '').trim();
   if (!combineWorkMode) return loc;
-  // Combine for accepted.xlsx "Where" column
+  // Combine for scored.xlsx "Where" column (legacy)
   const wm = String(job.workMode || '');
   if (!wm) return loc;
   if (!loc) return wm;
   return `${wm} | ${loc}`;
+}
+
+/**
+ * Format "Job Type" column for accepted.xlsx: workMode | positionType | location
+ */
+function formatJobTypeForDisplay(job) {
+  const parts = [
+    String(job.workMode || '').trim(),
+    String(job.positionType || 'Full-Time').trim(),
+    String(job.location || '').trim(),
+  ].filter(Boolean);
+  return parts.join(' | ');
 }
 
 function extractRootDomainUrl(urlStr) {
@@ -833,13 +873,13 @@ async function buildScoredXlsx(jobs, {
     { header: 'Salary',        width: 26, key: 'salary' },
   ];
   if (isAcceptedSheet) {
-    colDefs.push({ header: 'Where', width: 36, key: 'where' }); // combined workMode + location
+    colDefs.push({ header: 'Job Type', width: 40, key: 'jobType' }); // workMode | positionType | location
   } else {
     colDefs.push({ header: 'Location',   width: 30, key: 'location' });
     colDefs.push({ header: 'Work Mode',  width: 12, key: 'workMode' });
     colDefs.push({ header: 'Commutable', width: 12, key: 'commutable' });
+    colDefs.push({ header: 'Position Type', width: 14, key: 'positionType' });
   }
-  colDefs.push({ header: 'Position Type', width: 14, key: 'positionType' });
   if (!isAcceptedSheet) {
     colDefs.push({ header: 'Score', width: 8, key: 'score' });
     colDefs.push({ header: 'Role',  width: 22, key: 'role' });
@@ -916,7 +956,7 @@ async function buildScoredXlsx(jobs, {
       company:      j.company || '',
       title:        j.title || '',
       salary,
-      where:        formatLocationForDisplay(j, true),   // combined for accepted.xlsx
+      jobType:      formatJobTypeForDisplay(j),           // combined for accepted.xlsx
       location:     j.location || '',                     // separate for scored.xlsx
       workMode:     j.workMode || '',                     // separate for scored.xlsx
       commutable:   j.commutable === true ? 'Yes' : j.commutable === false ? 'No' : '',
@@ -1187,6 +1227,12 @@ Actor.main(async () => {
         if (cached.employmentType && !job.employmentType) {
           job.employmentType = cached.employmentType;
         }
+        if (cached.datePosted && !job.postedAt) {
+          job.postedAt = cached.datePosted;
+        }
+        if (cached.salary && !job.salary) {
+          job.salary = cached.salary;
+        }
         // Check cached description for remote signals
         if (job.workMode !== 'Remote') {
           const desc = cached.description.slice(0, 3000).toLowerCase();
@@ -1207,11 +1253,19 @@ Actor.main(async () => {
           builtInDescCache[url] = {
             description: result.description,
             employmentType: result.employmentType || '',
+            datePosted: result.datePosted || '',
+            salary: result.salary || '',
             fetchedAt: nowIso(),
           };
           builtInEnrichment.fetched++;
           if (result.employmentType && !job.employmentType) {
             job.employmentType = result.employmentType;
+          }
+          if (result.datePosted && !job.postedAt) {
+            job.postedAt = result.datePosted;
+          }
+          if (result.salary && !job.salary) {
+            job.salary = result.salary;
           }
           // Check newly fetched description for remote signals
           if (job.workMode !== 'Remote') {
@@ -1492,6 +1546,7 @@ Actor.main(async () => {
           'Return ONLY valid JSON, no markdown. Ensure fields: accept, score, confidence, reason_short, reasons, red_flags, tags, salary_extracted, company_url, role, location, work_mode, is_us, location_country.\n' +
           'location: Your best determination of the job\'s geographic location (e.g., "Boston MA", "JPN", "USA"). Use the provided location as a starting point, but refine based on the description.\n' +
           'work_mode: One of "Remote", "Hybrid", "On-Site", or "". Refine based on the description.\n' +
+          'salary_extracted: If the job description mentions any compensation info (salary range, hourly rate, annual pay, "up to $X", "$X-$Y/yr", OTE, etc.), extract it as a string (e.g., "$90,000-$120,000/yr", "$45/hr"). Look for explicit ranges, "base salary", "total compensation", "pay band". Return "" if no salary information is found.\n' +
           'is_us: true if this job is located in the United States, false if not, null if truly unknown.\n' +
           'location_country: ISO3 country code (e.g., "GBR", "POL", "USA") if determinable, or "" if unknown.' +
           locationDeterminationPrompt,
@@ -1769,6 +1824,76 @@ Actor.main(async () => {
   const { enrichedCount: linkedinEnrichCount, linkedinUrlCache } =
     await enrichLinkedInUrls(acceptedJobs, scoreCache?.linkedinUrlCache);
 
+  // --- Post-scoring salary scrape for accepted jobs missing salary ---
+  const salaryEnrichment = { attempted: 0, found: 0, failed: 0 };
+  const salaryScrapeCandidates = acceptedJobs.filter(j => {
+    const sal = j.salary || j.evaluation?.salary_extracted || '';
+    return !sal && (j.url || j.applyUrl);
+  });
+  if (salaryScrapeCandidates.length > 0) {
+    log.info(`Salary scrape: ${salaryScrapeCandidates.length} accepted jobs missing salary. Fetching job pages...`);
+    for (const job of salaryScrapeCandidates) {
+      const url = job.applyUrl || job.url;
+      if (!url) continue;
+      salaryEnrichment.attempted++;
+      try {
+        const res = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          },
+          signal: AbortSignal.timeout(10000),
+          redirect: 'follow',
+        });
+        if (!res.ok) { salaryEnrichment.failed++; continue; }
+        const html = await res.text();
+
+        // Try JSON-LD baseSalary
+        let foundSalary = '';
+        const ldMatches = html.matchAll(/<script\s+type=["']application\/ld(?:\+|&#x2B;)json["'][^>]*>([\s\S]*?)<\/script>/gi);
+        for (const match of ldMatches) {
+          try {
+            const data = JSON.parse(match[1]);
+            const postings = [];
+            if (data['@type'] === 'JobPosting') postings.push(data);
+            if (Array.isArray(data['@graph'])) {
+              for (const item of data['@graph']) {
+                if (item['@type'] === 'JobPosting') postings.push(item);
+              }
+            }
+            for (const posting of postings) {
+              const sal = formatBaseSalary(posting.baseSalary);
+              if (sal) { foundSalary = sal; break; }
+              // Also check datePosted while we're here
+              if (posting.datePosted && !job.postedAt) {
+                job.postedAt = posting.datePosted;
+              }
+            }
+          } catch { /* ignore malformed JSON-LD */ }
+          if (foundSalary) break;
+        }
+
+        // Fallback: regex for salary patterns in HTML
+        if (!foundSalary) {
+          const salaryMatch = html.match(/\$[\d,]+(?:\.\d{2})?\s*[-–—]\s*\$[\d,]+(?:\.\d{2})?\s*(?:\/\s*(?:yr|year|hr|hour|mo|month|annually))?/i);
+          if (salaryMatch) foundSalary = salaryMatch[0].trim();
+        }
+
+        if (foundSalary) {
+          job.salary = foundSalary;
+          salaryEnrichment.found++;
+          log.info(`Salary scraped for "${job.title}" at ${job.company}: ${foundSalary}`);
+        }
+      } catch (err) {
+        salaryEnrichment.failed++;
+      }
+      // Small delay between fetches
+      await new Promise(r => setTimeout(r, 500));
+    }
+    log.info(`Salary scrape done: ${salaryEnrichment.found} found, ${salaryEnrichment.failed} failed out of ${salaryEnrichment.attempted} attempted.`);
+  }
+
   // Build accepted.xlsx + scored.xlsx (Excel format with hyperlinks, frozen panes, bold headers)
   const xlsxContentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
@@ -1844,6 +1969,7 @@ Actor.main(async () => {
       failed: linkedinEnrichment.failed,
       remoteFound: linkedinEnrichment.remoteFound,
     },
+    salaryEnrichment,
     threshold,
     gateOnLocation,
     model,
