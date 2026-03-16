@@ -187,6 +187,17 @@ const FOREIGN_REGIONS = new Set([
   'eastern europe','western europe','emea','apac','latam',
 ]);
 
+// Canadian province codes/names → CAN. Used to identify Canadian locations
+// (e.g., "Montreal QC", "British Columbia") without a full province system.
+const CANADIAN_PROVINCES = new Map([
+  ['ab','CAN'],['bc','CAN'],['mb','CAN'],['nb','CAN'],['nl','CAN'],['ns','CAN'],
+  ['nt','CAN'],['nu','CAN'],['on','CAN'],['pe','CAN'],['qc','CAN'],['sk','CAN'],['yt','CAN'],
+  ['alberta','CAN'],['british columbia','CAN'],['manitoba','CAN'],['new brunswick','CAN'],
+  ['newfoundland','CAN'],['nova scotia','CAN'],['ontario','CAN'],['quebec','CAN'],
+  ['saskatchewan','CAN'],['prince edward island','CAN'],['northwest territories','CAN'],
+  ['nunavut','CAN'],['yukon','CAN'],
+]);
+
 // --------------- Employment Type & Work Mode Maps ---------------
 // Central lookup tables. Unknown values get logged for diagnostics (not silently defaulted).
 const EMPLOYMENT_TYPE_MAP = {
@@ -368,6 +379,9 @@ function _classifyToken(token) {
     return { type: 'usState', abbrev: STATE_NAME_TO_ABBREV[lower] };
   }
 
+  // Canadian province code (e.g., "QC", "BC", "ON")
+  if (CANADIAN_PROVINCES.has(lower)) return { type: 'foreignCountry', iso3: 'CAN' };
+
   // Foreign country name (single word) — try with and without diacritics (e.g., "México" → "Mexico")
   const asCountry = countryNameToIso3(_titleCase(trimmed)) || countryNameToIso3(_titleCase(_stripDiacritics(trimmed)));
   if (asCountry) return { type: 'foreignCountry', iso3: asCountry };
@@ -392,6 +406,9 @@ function _classifyMultiWordPhrase(words) {
       if (phraseLow in STATE_NAME_TO_ABBREV) {
         return { type: 'usState', abbrev: STATE_NAME_TO_ABBREV[phraseLow], consumed: windowSize, startIdx: i };
       }
+
+      // Multi-word Canadian province (e.g., "British Columbia", "New Brunswick")
+      if (CANADIAN_PROVINCES.has(phraseLow)) return { type: 'foreignCountry', iso3: 'CAN', consumed: windowSize, startIdx: i };
 
       // Multi-word country name (e.g., "United Kingdom", "South Korea", "Costa Rica")
       const iso3 = countryNameToIso3(_titleCase(phrase));
@@ -527,8 +544,31 @@ function normalizeLocationFields(rawLocation, options) {
     }
   }
 
+  // Normalize compressed comma patterns: "WA,US" → "WA, US", "Shanghai,CN" → "Shanghai, CN"
+  // GameJobs sometimes omits spaces around commas in location codes.
+  geo = geo.replace(/,(?!\s)/g, ', ');
+
+  // Separate trailing 2-letter state/country codes from city names within segments.
+  // "Renton WA" → "Renton, WA" when the last token is a known 2-letter code.
+  // This ensures proper segment-level classification in multi-segment mode.
+  geo = geo.replace(/\b([A-Za-z][\w\s]+?)\s+([A-Z]{2})(?=\s*,|$)/g, (match, city, code) => {
+    const upper = code.toUpperCase();
+    if (US_STATE_ABBREVS.has(upper) || CANADIAN_PROVINCES.has(code.toLowerCase())) {
+      return `${city}, ${code}`;
+    }
+    return match;
+  });
+
+  // Deduplicate consecutive identical tokens (e.g., "US US" → "US", "Shanghai Shanghai" → "Shanghai")
+  geo = geo.replace(/\b(\w+)(\s+\1)+\b/gi, '$1');
+
+  // Strip trailing junk phrases from location strings (e.g., "No Mans Area", "Metropolitan Area")
+  geo = geo.replace(/\s*\b(no mans area|metropolitan area|greater \w+ area)\b\s*/gi, '');
+
   // --- Split on commas for positional parsing ---
-  const segments = geo.split(',').map(s => s.trim()).filter(Boolean);
+  let segments = geo.split(',').map(s => s.trim()).filter(Boolean);
+  // Deduplicate consecutive identical segments (e.g., "Kyiv, Kyiv" → "Kyiv")
+  segments = segments.filter((s, i) => i === 0 || s.toLowerCase() !== segments[i - 1].toLowerCase());
 
   let foundCountry = null;      // { iso3 } or null
   let foundState = null;        // { abbrev } or null
