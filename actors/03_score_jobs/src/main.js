@@ -1080,12 +1080,14 @@ Actor.main(async () => {
 
   // --- Pre-compute location for all jobs and skip location_ok = "no" ---
   let locationSkipped = 0;
+  let llmLocationResolved = 0;
   const preLocationMap = new Map(); // idx → location_ok
   for (let i = 0; i < mergedJobs.length; i++) {
     preLocationMap.set(i, computeLocationOk(mergedJobs[i]));
   }
   const noLocationCount = [...preLocationMap.values()].filter(v => v === 'no').length;
-  log.info(`Location pre-filter: ${noLocationCount} jobs are location_ok=no and will be skipped (not sent to LLM).`);
+  const unknownLocationCount = [...preLocationMap.values()].filter(v => v === 'unknown').length;
+  log.info(`Location pre-filter: ${noLocationCount} jobs are location_ok=no (skipped). ${unknownLocationCount} jobs are location_ok=unknown (sent to LLM for location determination).`);
 
   // --- Pre-compute title-based disqualifiers (skip LLM, save cost) ---
   // Kyle is entry-level; any title implying seniority or management is not a fit.
@@ -1379,12 +1381,12 @@ Actor.main(async () => {
       };
     }
 
-    // 2) Location gate — deterministic reject, overrides cache
-    const locationOk = preLocationMap.get(idx) || computeLocationOk(job);
-    // Reject 'no' (confirmed non-commutable) AND 'unknown' for non-Remote jobs.
-    // If we can't confirm a non-Remote job is commutable to Lexington, it probably isn't.
-    // Remote jobs always get locationOk='yes' from computeLocationOk, so this never blocks them.
-    if (locationOk === 'no' || locationOk === 'unknown') {
+    // 2) Location gate — deterministic reject for confirmed non-commutable.
+    //    'unknown' jobs (ambiguous city, commutable: null) proceed to LLM for
+    //    location determination — the LLM reads the description for signals like
+    //    salary currency, "right to work in" phrases, benefits, etc.
+    let locationOk = preLocationMap.get(idx) || computeLocationOk(job);
+    if (locationOk === 'no') {
       locationSkipped += 1;
       return {
         ...job,
@@ -1394,12 +1396,8 @@ Actor.main(async () => {
           score: 0,
           confidence: 1.0,
           location_ok: locationOk,
-          reason_short: locationOk === 'no'
-            ? 'Location not commutable to Lexington, MA and not remote.'
-            : 'Location could not be confirmed as commutable to Lexington, MA.',
-          reasons: [locationOk === 'no'
-            ? 'Location outside commutable zone.'
-            : 'Location ambiguous and not remote — assumed non-commutable.'],
+          reason_short: 'Location not commutable to Lexington, MA and not remote.',
+          reasons: ['Location outside commutable zone.'],
           red_flags: ['Location disqualified (pre-filter).'],
           tags: [],
           salary_extracted: '',
@@ -1461,15 +1459,35 @@ Actor.main(async () => {
       description: truncate(job.description || '', maxDescChars),
     };
 
+    // --- Build LLM prompt ---
+    // For unknown-location jobs, add extra instructions for location determination.
+    const locationDeterminationPrompt = locationOk === 'unknown'
+      ? '\n\nIMPORTANT — LOCATION DETERMINATION: The geographic location for this job is ambiguous ' +
+        '(just a city name with no country, or blank). Please carefully examine the job description ' +
+        'for clues about the country:\n' +
+        '- Salary currency (PLN, GBP, CAD, EUR, etc. = non-US; USD/$ = likely US)\n' +
+        '- "Right to work in [country]" or "eligible to work in [country]" phrases\n' +
+        '- Benefits: NHS = UK, RRSP = Canada, 401(k) = US, "umowa o pracę" = Poland\n' +
+        '- "Based in [city, country]" or "office in [location]" phrases\n' +
+        '- Language requirements (e.g., Polish, German) suggesting a specific country\n' +
+        '- Company headquarters location mentioned in description\n' +
+        'Return is_us (true if US, false if non-US, null if truly unknown) and ' +
+        'location_country (ISO3 code like "GBR", "POL", "CAN" if you can determine it, or "" if unknown).\n' +
+        'Also determine if the job is within commuting distance (~45 min drive) of Lexington, Massachusetts — return is_commutable_to_lexington_ma (true/false/null).'
+      : '';
+
     const messages = [
       {
         role: 'system',
         content:
           rubricText +
           '\n\n' +
-          'Return ONLY valid JSON, no markdown. Ensure fields: accept, score, confidence, reason_short, reasons, red_flags, tags, salary_extracted, company_url, role, location, work_mode.\n' +
+          'Return ONLY valid JSON, no markdown. Ensure fields: accept, score, confidence, reason_short, reasons, red_flags, tags, salary_extracted, company_url, role, location, work_mode, is_us, location_country.\n' +
           'location: Your best determination of the job\'s geographic location (e.g., "Boston MA", "JPN", "USA"). Use the provided location as a starting point, but refine based on the description.\n' +
-          'work_mode: One of "Remote", "Hybrid", "On-Site", or "". Refine based on the description.',
+          'work_mode: One of "Remote", "Hybrid", "On-Site", or "". Refine based on the description.\n' +
+          'is_us: true if this job is located in the United States, false if not, null if truly unknown.\n' +
+          'location_country: ISO3 country code (e.g., "GBR", "POL", "USA") if determinable, or "" if unknown.' +
+          locationDeterminationPrompt,
       },
       {
         role: 'user',
@@ -1496,6 +1514,73 @@ Actor.main(async () => {
       let wm = llmWorkMode.trim();
       if (wm === 'RemoteOK' || wm === 'RemoteOnly') wm = 'Remote';
       job.workMode = wm;
+    }
+
+    // --- Tier 3: LLM location resolution for ambiguous-location jobs ---
+    // Use LLM's is_us / location_country / is_commutable_to_lexington_ma to
+    // resolve ambiguous locations and re-evaluate the location gate.
+    if (locationOk === 'unknown') {
+      const llmIsUS = evaluation.is_us;
+      const llmCountry = evaluation.location_country;
+      const llmCommutable = evaluation.is_commutable_to_lexington_ma;
+
+      if (llmIsUS === false) {
+        // LLM determined this is NOT in the US → foreign, not commutable
+        job.commutable = false;
+        if (llmCountry && typeof llmCountry === 'string' && /^[A-Z]{3}$/.test(llmCountry) && llmCountry !== 'USA') {
+          job.location = llmCountry;
+        }
+        llmLocationResolved += 1;
+      } else if (llmIsUS === true) {
+        // LLM determined this IS in the US
+        if (llmCommutable === true) {
+          // Commutable to Lexington, MA — accept
+          job.commutable = true;
+          if (llmLocation && typeof llmLocation === 'string' && llmLocation.trim()) {
+            job.location = llmLocation.trim();
+          }
+        } else {
+          // US but not commutable — reject unless remote
+          job.commutable = false;
+          if (llmLocation && typeof llmLocation === 'string' && llmLocation.trim()) {
+            job.location = llmLocation.trim();
+          }
+        }
+        llmLocationResolved += 1;
+      }
+      // else: LLM couldn't determine (is_us: null) → stays commutable: null
+
+      // Re-evaluate location gate with updated info
+      locationOk = computeLocationOk(job);
+      preLocationMap.set(idx, locationOk);
+
+      // If still unknown or no after LLM determination, reject
+      if (locationOk === 'no' || locationOk === 'unknown') {
+        locationSkipped += 1;
+        return {
+          ...job,
+          evaluation: {
+            ...evaluation,
+            accept: false,
+            accepted: false,
+            score: 0,
+            confidence: 1.0,
+            location_ok: locationOk,
+            reason_short: locationOk === 'no'
+              ? 'Location not commutable to Lexington, MA and not remote (determined by LLM).'
+              : 'Location could not be confirmed as commutable to Lexington, MA.',
+            reasons: [locationOk === 'no'
+              ? `Location outside commutable zone (LLM determined: ${llmCountry || llmIsUS === false ? 'non-US' : 'unknown'}).`
+              : 'Location ambiguous even after LLM analysis — assumed non-commutable.'],
+            red_flags: ['Location disqualified (post-LLM).'],
+            tags: evaluation.tags || [],
+            salary_extracted: evaluation.salary_extracted || '',
+            company_url: evaluation.company_url || '',
+            role: evaluation.role || [],
+          },
+          scoredAt: nowIso(),
+        };
+      }
     }
 
     const accepted =
@@ -1561,7 +1646,7 @@ Actor.main(async () => {
   }
 
   const totalSkipped = locationSkipped + titleSkipped + expiredSkipped;
-  log.info(`Scoring done. ${cacheHits} cache hits, ${locationSkipped} skipped (bad location), ${titleSkipped} skipped (bad title), ${expiredSkipped} skipped (expired), ${mergedJobs.length - totalSkipped - cacheHits} sent to LLM. ${scoringFailures.length} hard failures.`);
+  log.info(`Scoring done. ${cacheHits} cache hits, ${locationSkipped} skipped (bad location, incl. ${llmLocationResolved} resolved by LLM), ${titleSkipped} skipped (bad title), ${expiredSkipped} skipped (expired), ${mergedJobs.length - totalSkipped - cacheHits} sent to LLM. ${scoringFailures.length} hard failures.`);
 
   // --- Post-scoring filters ---
 
@@ -1716,6 +1801,7 @@ Actor.main(async () => {
     acceptedDatasetName,
     totalMerged: mergedJobs.length,
     locationSkipped,
+    llmLocationResolved,
     titleSkipped,
     expiredSkipped,
     sentToLlm: mergedJobs.length - locationSkipped - titleSkipped - expiredSkipped - cacheHits,

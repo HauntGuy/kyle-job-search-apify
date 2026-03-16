@@ -60,11 +60,31 @@ function _resolveUSCity(cityName) {
 }
 function _resolveCityOnly(cityName) {
   const cityLow = _stripDiacritics(cityName).toLowerCase().trim();
-  const countries = _cityCountryMap.get(cityLow); if (!countries) return null;
-  const hasUS = countries.has('US'); const foreignCodes = Array.from(countries).filter(c => c !== 'US');
-  if (foreignCodes.length > 0 && !hasUS) { const iso3 = isoCountries.alpha2ToAlpha3(foreignCodes[0]); return { location: iso3 || _titleCase(cityName), commutable: false }; }
-  if (hasUS && foreignCodes.length === 0) { return _resolveUSCity(cityName); }
-  return { location: _titleCase(cityName), commutable: null };
+  const countries = _cityCountryMap.get(cityLow);
+  if (countries) {
+    const hasUS = countries.has('US'); const foreignCodes = Array.from(countries).filter(c => c !== 'US');
+    if (foreignCodes.length > 0 && !hasUS) { const iso3 = isoCountries.alpha2ToAlpha3(foreignCodes[0]); return { location: iso3 || _titleCase(cityName), commutable: false }; }
+    if (hasUS && foreignCodes.length === 0) { return _resolveUSCity(cityName); }
+    return { location: _titleCase(cityName), commutable: null };
+  }
+  // Word-by-word fallback for multi-word strings
+  const words = cityName.replace(/-/g, ' ').split(/\s+/).filter(w => w.length > 1);
+  if (words.length > 1) {
+    const allCountries = new Set(); let anyKnownCity = false; let firstKnownWord = null;
+    for (const word of words) {
+      const key = _stripDiacritics(word).toLowerCase();
+      const wc = _cityCountryMap.get(key);
+      if (wc) { anyKnownCity = true; if (!firstKnownWord) firstKnownWord = word; for (const c of wc) allCountries.add(c); }
+    }
+    if (anyKnownCity) {
+      const hasUS = allCountries.has('US'); const foreignCodes = Array.from(allCountries).filter(c => c !== 'US');
+      if (foreignCodes.length > 0 && !hasUS) { const iso3 = isoCountries.alpha2ToAlpha3(foreignCodes[0]); return { location: iso3 || _titleCase(firstKnownWord), commutable: false }; }
+      if (hasUS && foreignCodes.length === 0) { return _resolveUSCity(firstKnownWord); }
+      return { location: _titleCase(cityName), commutable: null };
+    }
+    return { location: '', commutable: null };
+  }
+  return { location: '', commutable: null };
 }
 
 function _classifySegment(segment) {
@@ -185,7 +205,7 @@ function normalizeLocationFields(rawLocation) {
     if (cc && cc.has('GE')) return { workMode, location: 'GEO', commutable: false };
     return { workMode, location: `${cityStr} ${ambiguousState.abbrev}`, commutable: _computeCommutable(ambiguousState.abbrev, cityStr) };
   }
-  if (cityStr) { const r = _resolveCityOnly(cityStr); if (r) return { workMode, ...r }; return { workMode, location: cityStr, commutable: null }; }
+  if (cityStr) { return { workMode, ..._resolveCityOnly(cityStr) }; }
   return { workMode, location: geo.trim(), commutable: null };
 }
 
@@ -240,6 +260,13 @@ const tests = [
   ['Jakarta ID', 'IDN', false, ''],
   // But Boise ID should stay Idaho (Boise exists in US)
   ['Boise ID', 'Boise ID', false, ''],
+  // Tier 1b: Multi-word strings — word-by-word foreign detection
+  ['Bengaluru Karnataka',          'IND',              false, ''],  // both words → India only
+  ['Warszawa Województwo Mazowieckie', 'POL',          false, ''],  // Warszawa → Poland only
+  ['Ljubljana Limassol Barcelona', 'SVN',              false, ''],  // all words → foreign only (SI, CY, BR/ES/PH/VE)
+  // Tier 1c: Unknown strings — blank location for LLM determination
+  ['München',                      '',                 null,  ''],  // native spelling not in DB
+  ['Second Dinner',                '',                 null,  ''],  // not a city name at all
 ];
 
 let passed = 0, failed = 0;

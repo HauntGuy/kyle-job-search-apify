@@ -439,28 +439,76 @@ function _resolveUSCity(cityName) {
 }
 
 function _resolveCityOnly(cityName) {
-  // Bare city with no state/country/domestic context. Conservative:
-  //   - Foreign-only city → ISO3, commutable: false
-  //   - US-only city → try _resolveUSCity (resolves if unambiguous)
-  //   - Ambiguous (US + foreign) → bare city, commutable: null
+  // Bare city with no state/country/domestic context. Three-tier resolution:
+  //   Tier 1a: Full-string lookup in city database
+  //     - Foreign-only city → ISO3, commutable: false
+  //     - US-only city → try _resolveUSCity (resolves if unambiguous)
+  //     - Ambiguous (US + foreign) → bare city, commutable: null (LLM decides)
+  //   Tier 1b: Word-by-word lookup for multi-word strings not in database
+  //     - Any word is a known city AND combined countries have NO US → foreign
+  //     - Any word is a known city AND countries include US → ambiguous (LLM decides)
+  //     - No words are known cities → blank location (LLM decides)
+  //   Tier 1c: Single word not in database → blank location (LLM decides)
   const cityLow = _stripDiacritics(cityName).toLowerCase().trim();
   const countries = _cityCountryMap.get(cityLow);
-  if (!countries) return null;
 
-  const hasUS = countries.has('US');
-  const foreignCodes = Array.from(countries).filter(c => c !== 'US');
+  if (countries) {
+    // Tier 1a: Full string found in city database
+    const hasUS = countries.has('US');
+    const foreignCodes = Array.from(countries).filter(c => c !== 'US');
 
-  if (foreignCodes.length > 0 && !hasUS) {
-    // Unambiguously foreign — return ISO3
-    const iso3 = isoCountries.alpha2ToAlpha3(foreignCodes[0]);
-    return { location: iso3 || _titleCase(cityName), commutable: false };
+    if (foreignCodes.length > 0 && !hasUS) {
+      const iso3 = isoCountries.alpha2ToAlpha3(foreignCodes[0]);
+      return { location: iso3 || _titleCase(cityName), commutable: false };
+    }
+    if (hasUS && foreignCodes.length === 0) {
+      return _resolveUSCity(cityName);
+    }
+    // Ambiguous (exists in both US and foreign countries) — don't guess
+    return { location: _titleCase(cityName), commutable: null };
   }
-  if (hasUS && foreignCodes.length === 0) {
-    // Unambiguously US — resolve state if single match
-    return _resolveUSCity(cityName);
+
+  // Tier 1b: Full string not found — try word-by-word for multi-word strings
+  const words = cityName.replace(/-/g, ' ').split(/\s+/).filter(w => w.length > 1);
+  if (words.length > 1) {
+    const allCountries = new Set();
+    let anyKnownCity = false;
+    let firstKnownWord = null;
+
+    for (const word of words) {
+      const key = _stripDiacritics(word).toLowerCase();
+      const wordCountries = _cityCountryMap.get(key);
+      if (wordCountries) {
+        anyKnownCity = true;
+        if (!firstKnownWord) firstKnownWord = word;
+        for (const c of wordCountries) allCountries.add(c);
+      }
+    }
+
+    if (anyKnownCity) {
+      const hasUS = allCountries.has('US');
+      const foreignCodes = Array.from(allCountries).filter(c => c !== 'US');
+
+      if (foreignCodes.length > 0 && !hasUS) {
+        // All recognized city words are foreign-only → definitely not US
+        const iso3 = isoCountries.alpha2ToAlpha3(foreignCodes[0]);
+        return { location: iso3 || _titleCase(firstKnownWord), commutable: false };
+      }
+      if (hasUS && foreignCodes.length === 0) {
+        return _resolveUSCity(firstKnownWord);
+      }
+      // Ambiguous — let LLM decide
+      return { location: _titleCase(cityName), commutable: null };
+    }
+
+    // No words are known cities — probably not a real location (e.g., "Second Dinner").
+    // Blank the location so the scorer's LLM can determine it from the description.
+    return { location: '', commutable: null };
   }
-  // Ambiguous (exists in both US and foreign countries) — don't guess
-  return { location: _titleCase(cityName), commutable: null };
+
+  // Tier 1c: Single word not found in database (e.g., "München" native spelling).
+  // Blank the location so the scorer's LLM can determine it from the description.
+  return { location: '', commutable: null };
 }
 
 /**
@@ -758,10 +806,10 @@ function normalizeLocationFields(rawLocation, options) {
   }
 
   // Priority 7: City-only (no state, country, or domestic signal)
+  // _resolveCityOnly uses the city database for Tier 1 resolution, and blanks
+  // unrecognized locations so the scorer's LLM can determine them (Tier 3).
   if (cityStr) {
-    const resolved = _resolveCityOnly(cityStr);
-    if (resolved) return { workMode, ...resolved };
-    return { workMode, location: cityStr, commutable: null };
+    return { workMode, ..._resolveCityOnly(cityStr) };
   }
 
   // Priority 8: Nothing classifiable
