@@ -1278,6 +1278,7 @@ Actor.main(async () => {
     { re: /\bStaff\b/i,                      label: 'Staff' },
   ];
   let titleSkipped = 0;
+  let blocklistedCount = 0;
 
   function titleDisqualifyReason(title) {
     for (const { re, label } of TITLE_DQ_PATTERNS) {
@@ -1628,6 +1629,32 @@ Actor.main(async () => {
       };
     }
 
+    // --- Blocklist check (before cache, so blocklisted jobs are always excluded) ---
+    const jobIdList = job.sourceJobIds || [];
+    const isBlocklisted = jobIdList.some(id => blocklistIds.has(id));
+    if (isBlocklisted) {
+      blocklistedCount++;
+      return {
+        ...job,
+        evaluation: {
+          accept: false,
+          accepted: false,
+          score: 0,
+          confidence: 1.0,
+          location_ok: locationOk,
+          reason_short: 'Job is on the blocklist.',
+          reasons: ['Manually blocklisted.'],
+          red_flags: ['Blocklisted.'],
+          tags: [],
+          salary_extracted: '',
+          company_url: '',
+          role: [],
+          blocklisted: true,
+        },
+        scoredAt: nowIso(),
+      };
+    }
+
     // --- Cache check (only after all gates pass) ---
     const cached = lookupCache(cacheMap, job);
     if (cached?.evaluation) {
@@ -1781,14 +1808,9 @@ Actor.main(async () => {
       }
     }
 
-    // Check blocklist — if any of this job's IDs are blocklisted, force rejection
-    const jobIdList = job.sourceJobIds || [];
-    const isBlocklisted = jobIdList.some(id => blocklistIds.has(id));
-
     const accepted =
       accept &&
       score >= threshold &&
-      !isBlocklisted &&
       (!gateOnLocation || locationOk === 'yes');
 
     return {
@@ -1799,7 +1821,6 @@ Actor.main(async () => {
         accept,
         accepted,
         location_ok: locationOk,
-        ...(isBlocklisted ? { blocklisted: true } : {}),
       },
       scoredAt: nowIso(),
     };
@@ -1931,8 +1952,7 @@ Actor.main(async () => {
     log.info(`LinkedIn check: ${linkedinClosedCount} closed (${linkedinClosedCacheHits} cached, ${linkedinClosedCount - linkedinClosedCacheHits} new). ${linkedinAccepted.length - linkedinClosedCount} open.`);
   }
 
-  // Count blocklisted jobs
-  const blocklistedCount = results.filter(r => r?.evaluation?.blocklisted).length;
+  // Log blocklisted count
   if (blocklistedCount > 0) {
     log.info(`Blocklist: ${blocklistedCount} job(s) excluded from accepted.`);
   }
