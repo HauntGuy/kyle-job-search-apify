@@ -1057,6 +1057,13 @@ Actor.main(async () => {
     log.info(`Score cache invalidated: ${reasons.join('; ')}. Scoring all jobs fresh.`);
   }
 
+  // --- Blocklist: manually rejected jobs that should never appear in accepted ---
+  const blocklist = (await kv.getValue('blocklist.json')) || {};
+  const blocklistIds = new Set(Object.keys(blocklist));
+  if (blocklistIds.size > 0) {
+    log.info(`Loaded blocklist with ${blocklistIds.size} job IDs.`);
+  }
+
   const openAiStats = {
     calls: 0,
     retries: 0,
@@ -1583,9 +1590,14 @@ Actor.main(async () => {
       }
     }
 
+    // Check blocklist — if any of this job's IDs are blocklisted, force rejection
+    const jobIdList = job.sourceJobIds || [];
+    const isBlocklisted = jobIdList.some(id => blocklistIds.has(id));
+
     const accepted =
       accept &&
       score >= threshold &&
+      !isBlocklisted &&
       (!gateOnLocation || locationOk === 'yes');
 
     return {
@@ -1596,6 +1608,7 @@ Actor.main(async () => {
         accept,
         accepted,
         location_ok: locationOk,
+        ...(isBlocklisted ? { blocklisted: true } : {}),
       },
       scoredAt: nowIso(),
     };
@@ -1727,6 +1740,12 @@ Actor.main(async () => {
     log.info(`LinkedIn check: ${linkedinClosedCount} closed (${linkedinClosedCacheHits} cached, ${linkedinClosedCount - linkedinClosedCacheHits} new). ${linkedinAccepted.length - linkedinClosedCount} open.`);
   }
 
+  // Count blocklisted jobs
+  const blocklistedCount = results.filter(r => r?.evaluation?.blocklisted).length;
+  if (blocklistedCount > 0) {
+    log.info(`Blocklist: ${blocklistedCount} job(s) excluded from accepted.`);
+  }
+
   // Push scored + accepted datasets
   const scoredBatch = 200;
   let acceptedCount = 0;
@@ -1808,6 +1827,7 @@ Actor.main(async () => {
     totalScored: results.length,
     accepted: acceptedJobs.length,
     seniorTier3Filtered,
+    blocklisted: blocklistedCount,
     linkedinClosed: linkedinClosedCount,
     linkedinClosedCacheHits,
     linkedinEnriched: linkedinEnrichCount,
