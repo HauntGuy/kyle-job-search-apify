@@ -7,6 +7,7 @@ import ExcelJS from 'exceljs';
 import http from 'node:http';
 import https from 'node:https';
 import { processWithRetries } from './resilient-fetch.js';
+import { DetailCache } from './detail-cache.js';
 
 // Disable HTTP keep-alive for the legacy HTTP module.  When scoring with
 // reasoning models (GPT-5), requests take 10-30s each.  During that time
@@ -1454,24 +1455,8 @@ Actor.main(async () => {
   // --- Built In description enrichment (fetch missing descriptions for pre-filter survivors) ---
   const builtInEnrichment = { total: 0, cached: 0, fetched: 0, failed: 0, failedUrls: [] };
 
-  // Load description cache from KV store
-  let builtInDescCache = {};
-  try {
-    const rawCache = await kv.getValue('builtin_desc_cache.json');
-    if (rawCache && typeof rawCache === 'object') {
-      const cutoff = Date.now() - BUILTIN_DESC_CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
-      for (const [url, entry] of Object.entries(rawCache)) {
-        if (entry?.fetchedAt && new Date(entry.fetchedAt).getTime() >= cutoff) {
-          builtInDescCache[url] = entry;
-        }
-      }
-      const pruned = Object.keys(rawCache).length - Object.keys(builtInDescCache).length;
-      if (pruned > 0) log.info(`Built In desc cache: pruned ${pruned} expired entries (TTL ${BUILTIN_DESC_CACHE_TTL_DAYS}d).`);
-      log.info(`Built In desc cache loaded: ${Object.keys(builtInDescCache).length} entries.`);
-    }
-  } catch (err) {
-    log.warning(`Failed to load Built In desc cache: ${err?.message || err}`);
-  }
+  const builtInCache = new DetailCache({ kvStore: kv, kvKey: 'builtin_desc_cache.json', ttlDays: BUILTIN_DESC_CACHE_TTL_DAYS, label: 'Built In desc' });
+  await builtInCache.load();
 
   // Identify Built In jobs that pass all pre-filters and have empty descriptions
   const builtInJobsToEnrich = [];
@@ -1495,9 +1480,8 @@ Actor.main(async () => {
       if (!url) { builtInEnrichment.failed++; continue; }
 
       // Check cache first (re-fetch if missing structured data fields added in v10)
-      const cached = builtInDescCache[url];
-      const cacheHasStructuredData = cached && ('applicantCountries' in cached || 'jobLocationAddress' in cached);
-      if (cached?.description && cacheHasStructuredData) {
+      const cached = builtInCache.get(url, entry => entry?.description && ('applicantCountries' in entry || 'jobLocationAddress' in entry));
+      if (cached) {
         job.description = cached.description;
         applyBuiltInStructuredData(job, cached, index, preLocationMap);
         builtInEnrichment.cached++;
@@ -1509,7 +1493,7 @@ Actor.main(async () => {
         const result = await fetchBuiltInDescription(url);
         if (result?.description) {
           job.description = result.description;
-          builtInDescCache[url] = {
+          builtInCache.set(url, {
             description: result.description,
             employmentType: result.employmentType || '',
             datePosted: result.datePosted || '',
@@ -1518,8 +1502,7 @@ Actor.main(async () => {
             jobLocationType: result.jobLocationType || '',
             applicantCountries: result.applicantCountries || [],
             jobLocationAddress: result.jobLocationAddress || {},
-            fetchedAt: nowIso(),
-          };
+          });
           builtInEnrichment.fetched++;
           applyBuiltInStructuredData(job, result, index, preLocationMap);
           log.info(`Built In enriched: "${job.title}" at ${job.company} (${result.description.length} chars, country=${result.jobLocationAddress?.addressCountry || '?'})`);
@@ -1551,12 +1534,7 @@ Actor.main(async () => {
     log.info(`Built In enrichment done: ${builtInEnrichment.fetched} fetched, ${builtInEnrichment.cached} cached, ${builtInEnrichment.failed} failed.`);
   }
 
-  // Save description cache
-  try {
-    await kv.setValue('builtin_desc_cache.json', builtInDescCache);
-  } catch (err) {
-    log.warning(`Failed to save Built In desc cache: ${err?.message || err}`);
-  }
+  await builtInCache.save();
 
   // --- LinkedIn detail enrichment (fetch workMode for LinkedIn jobs missing it) ---
   // Uses bestscrapers/linkedin-job-details-scraper to get remote_allow, job_type, salary
@@ -1564,24 +1542,8 @@ Actor.main(async () => {
   const linkedinEnrichment = { total: 0, cached: 0, fetched: 0, failed: 0, remoteFound: 0 };
   const apifyToken = process.env.APIFY_TOKEN;
 
-  // Load LinkedIn detail cache from KV store
-  let linkedinDetailCache = {};
-  try {
-    const rawCache = await kv.getValue('linkedin_detail_cache.json');
-    if (rawCache && typeof rawCache === 'object') {
-      const cutoff = Date.now() - LINKEDIN_DETAIL_CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
-      for (const [jobId, entry] of Object.entries(rawCache)) {
-        if (entry?.fetchedAt && new Date(entry.fetchedAt).getTime() >= cutoff) {
-          linkedinDetailCache[jobId] = entry;
-        }
-      }
-      const pruned = Object.keys(rawCache).length - Object.keys(linkedinDetailCache).length;
-      if (pruned > 0) log.info(`LinkedIn detail cache: pruned ${pruned} expired entries (TTL ${LINKEDIN_DETAIL_CACHE_TTL_DAYS}d).`);
-      log.info(`LinkedIn detail cache loaded: ${Object.keys(linkedinDetailCache).length} entries.`);
-    }
-  } catch (err) {
-    log.warning(`Failed to load LinkedIn detail cache: ${err?.message || err}`);
-  }
+  const linkedinCache = new DetailCache({ kvStore: kv, kvKey: 'linkedin_detail_cache.json', ttlDays: LINKEDIN_DETAIL_CACHE_TTL_DAYS, label: 'LinkedIn detail' });
+  await linkedinCache.load();
 
   // Identify LinkedIn jobs that pass all pre-filters and have blank workMode
   const linkedinJobsToEnrich = [];
@@ -1604,7 +1566,7 @@ Actor.main(async () => {
 
     for (const { job, index, linkedinJobId } of linkedinJobsToEnrich) {
       // Check cache first
-      const cached = linkedinDetailCache[linkedinJobId];
+      const cached = linkedinCache.get(linkedinJobId);
       if (cached) {
         if (cached.remote_allow) {
           job.workMode = 'Remote';
@@ -1626,12 +1588,11 @@ Actor.main(async () => {
       try {
         const detail = await fetchLinkedInDetail(linkedinJobId, apifyToken);
         if (detail) {
-          linkedinDetailCache[linkedinJobId] = {
+          linkedinCache.set(linkedinJobId, {
             remote_allow: !!detail.remote_allow,
             job_type: detail.job_type || '',
             salary: detail.salary_display || '',
-            fetchedAt: nowIso(),
-          };
+          });
           if (detail.remote_allow) {
             job.workMode = 'Remote';
             preLocationMap.set(index, computeLocationOk(job));
@@ -1663,12 +1624,7 @@ Actor.main(async () => {
     log.warning(`LinkedIn detail enrichment skipped: APIFY_TOKEN not available (${linkedinJobsToEnrich.length} jobs would benefit).`);
   }
 
-  // Save LinkedIn detail cache
-  try {
-    await kv.setValue('linkedin_detail_cache.json', linkedinDetailCache);
-  } catch (err) {
-    log.warning(`Failed to save LinkedIn detail cache: ${err?.message || err}`);
-  }
+  await linkedinCache.save();
 
   // --- Scoring helper (reused for initial pass and re-score passes) ---
   async function scoreOneJob(job, idx) {

@@ -127,6 +127,51 @@
       "fetchDetails": true
     },
     {
+      "id": "gjd_unity",
+      "type": "gjd",
+      "enabled": true,
+      "query": "unity developer",
+      "maxPages": 50,
+      "crawlDelayMs": 5000,
+      "fetchDetails": true
+    },
+    {
+      "id": "gjd_game_dev",
+      "type": "gjd",
+      "enabled": true,
+      "query": "game developer",
+      "maxPages": 50,
+      "crawlDelayMs": 5000,
+      "fetchDetails": true
+    },
+    {
+      "id": "gjd_game_designer",
+      "type": "gjd",
+      "enabled": true,
+      "query": "game designer",
+      "maxPages": 50,
+      "crawlDelayMs": 5000,
+      "fetchDetails": true
+    },
+    {
+      "id": "gjd_level_designer",
+      "type": "gjd",
+      "enabled": true,
+      "query": "level designer",
+      "maxPages": 50,
+      "crawlDelayMs": 5000,
+      "fetchDetails": true
+    },
+    {
+      "id": "gjd_gameplay_engineer",
+      "type": "gjd",
+      "enabled": true,
+      "query": "gameplay engineer",
+      "maxPages": 50,
+      "crawlDelayMs": 5000,
+      "fetchDetails": true
+    },
+    {
       "id": "builtin_unity",
       "type": "builtin",
       "enabled": true,
