@@ -1702,6 +1702,7 @@ async function runGameJobsCo(source, kv) {
   let detailsFetched = 0;
   let detailsFailed = 0;
   let detailsCached = 0;
+  let detailsSkippedAge = 0;
 
   if (fetchDetails && uniqueEntries.length > 0) {
     log.info(`[${source.id}] Fetching ${uniqueEntries.length} detail pages (${detailDelayMs}ms delay)...`);
@@ -1721,7 +1722,6 @@ async function runGameJobsCo(source, kv) {
     }
 
     const failedEntries = []; // collect 403'd entries for retry
-    let detailsSkippedAge = 0;
 
     for (let i = 0; i < uniqueEntries.length; i++) {
       const entry = uniqueEntries[i];
