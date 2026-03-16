@@ -476,6 +476,17 @@ function _classifySegment(segment) {
   const multi = _classifyMultiWordPhrase(cleaned);
   if (multi && multi.consumed === cleaned.length) return multi;
 
+  // Partial match: multi-word phrase found but doesn't consume the whole segment.
+  // E.g., "Los Angeles United States of America" → "United States of America" matched.
+  // Return the classification with leftover words as city parts.
+  if (multi) {
+    const leftover = [
+      ...cleaned.slice(0, multi.startIdx),
+      ...cleaned.slice(multi.startIdx + multi.consumed)
+    ].join(' ').trim();
+    return { ...multi, leftoverCity: leftover || null };
+  }
+
   // Single word: try token classification
   if (cleaned.length === 1) return _classifyToken(cleaned[0]);
 
@@ -584,14 +595,19 @@ function normalizeLocationFields(rawLocation, options) {
       const result = _classifySegment(segments[i]);
       if (result && result.type === 'foreignCountry' && !foundCountry) {
         foundCountry = result;
+        if (result.leftoverCity) cityParts.unshift(result.leftoverCity);
       } else if (result && result.type === 'usState' && !foundState) {
         foundState = result;
+        if (result.leftoverCity) cityParts.unshift(result.leftoverCity);
       } else if (result && result.type === 'domestic') {
         foundDomestic = true;
+        if (result.leftoverCity) cityParts.unshift(result.leftoverCity);
       } else if (result && result.type === 'ambiguousState' && !ambiguousState) {
         ambiguousState = result;
+        if (result.leftoverCity) cityParts.unshift(result.leftoverCity);
       } else if (result && result.type === 'foreignRegion' && !foundRegion) {
         foundRegion = result;
+        if (result.leftoverCity) cityParts.unshift(result.leftoverCity);
       } else {
         cityParts.unshift(segments[i]); // preserve left-to-right order
       }
@@ -649,9 +665,15 @@ function normalizeLocationFields(rawLocation, options) {
   }
 
   // --- Resolve ---
-  const cityStr = cityParts.length
-    ? _titleCase(cityParts.join(' ').trim())
-    : '';
+  // Strip leading street address prefixes (e.g., "23 Odyssey Irvine" → "Irvine")
+  // Pattern: digits followed by a word that isn't a city (street name), then real city
+  let rawCity = cityParts.join(' ').trim();
+  rawCity = rawCity.replace(/^\d+\s+\S+\s+/, (match) => {
+    // Only strip if what remains has content (don't strip the whole thing)
+    const remainder = rawCity.slice(match.length).trim();
+    return remainder ? '' : match;
+  });
+  const cityStr = rawCity ? _titleCase(rawCity) : '';
 
   // Country hint override: if upstream metadata says the country is NOT the US,
   // don't let a false "United States" domestic signal promote an ambiguous state.
