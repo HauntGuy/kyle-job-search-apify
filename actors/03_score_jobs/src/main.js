@@ -448,12 +448,15 @@ function applyBuiltInStructuredData(job, data, index, preLocationMap) {
     changed = true;
   }
 
-  // applicantLocationRequirements: if USA is not listed, job is not for US applicants
-  // This rejects the job even if marked Remote — the employer restricts to specific countries
+  // applicantLocationRequirements: if USA is not listed, job may not be for US applicants.
+  // Only reject NON-remote jobs — many foreign companies mark remote jobs with their own
+  // country in applicantLocationRequirements even when they hire worldwide.
   const appCountries = data.applicantCountries || [];
   if (appCountries.length > 0 && !appCountries.includes('USA') && !appCountries.includes('US')) {
     job.commutable = false;
-    job._usExcluded = true;
+    if (job.workMode !== 'Remote') {
+      job._usExcluded = true;
+    }
     // Update location to the first listed country if we don't have a better one
     if (!job.location || job.location === '') {
       job.location = appCountries[0]; // Already ISO3 from Built In
