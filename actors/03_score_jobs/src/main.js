@@ -1443,7 +1443,7 @@ Actor.main(async () => {
     if (preLocationMap.get(i) === 'no') continue;
     if (titleDisqualifyReason(job.title || '')) continue;
     if (preExpiredSet.has(i)) continue;
-    if (job.workMode) continue; // already has workMode — no need
+    if (job.workMode && job.employmentType) continue; // already has both — no need
     const sources = Array.isArray(job.sources) ? job.sources : [job.source].filter(Boolean);
     if (!sources.some(s => /^(linkedin_|fantastic_)/.test(String(s)))) continue;
     const linkedinJobId = extractLinkedInJobId(job);
@@ -1466,6 +1466,7 @@ Actor.main(async () => {
         }
         if (cached.job_type && !job.employmentType) {
           job.employmentType = cached.job_type;
+          job.positionType = detectPositionType(job); // re-detect after employmentType update
         }
         if (cached.salary && !job.salary) {
           job.salary = cached.salary;
@@ -1491,6 +1492,7 @@ Actor.main(async () => {
           }
           if (detail.job_type && !job.employmentType) {
             job.employmentType = detail.job_type;
+            job.positionType = detectPositionType(job); // re-detect after employmentType update
           }
           if (detail.salary_display && !job.salary) {
             job.salary = detail.salary_display;
@@ -1552,7 +1554,31 @@ Actor.main(async () => {
       };
     }
 
-    // 2) Location gate — deterministic reject for confirmed non-commutable.
+    // 2) Position type gate — reject Volunteer and Internship positions
+    const pt = job.positionType || detectPositionType(job);
+    if (pt === 'Volunteer' || pt === 'Internship') {
+      titleSkipped += 1; // reuse titleSkipped counter for simplicity
+      return {
+        ...job,
+        evaluation: {
+          accept: false,
+          accepted: false,
+          score: 0,
+          confidence: 1.0,
+          location_ok: preLocationMap.get(idx) || computeLocationOk(job),
+          reason_short: `${pt} position — not a paid full-time role.`,
+          reasons: [`${pt} position filtered out.`],
+          red_flags: [`${pt} position (pre-filter).`],
+          tags: [],
+          salary_extracted: '',
+          company_url: '',
+          role: [],
+        },
+        scoredAt: nowIso(),
+      };
+    }
+
+    // 3) Location gate — deterministic reject for confirmed non-commutable.
     //    'unknown' jobs (ambiguous city, commutable: null) proceed to LLM for
     //    location determination — the LLM reads the description for signals like
     //    salary currency, "right to work in" phrases, benefits, etc.
