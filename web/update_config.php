@@ -57,10 +57,26 @@ if (!isset($data['content']) || !is_string($data['content'])) {
     exit;
 }
 
+// Repair double-encoded UTF-8 (Windows cp1252 issue).
+// When Python on Windows pipes Unicode through cp1252 stdout, em-dashes (E2 80 94)
+// become C3 A2 C2 80 C2 94 (each byte re-encoded as UTF-8). Detect and fix this.
+// Signature: C3 A2 followed by C2 80..C2 BF is a double-encoded sequence.
+$content = $data['content'];
+$repaired = false;
+if (preg_match('/\xC3\xA2[\xC2\xC3][\x80-\xBF]/', $content)) {
+    // Attempt repair: decode UTF-8 bytes as Latin-1 to undo the double-encoding
+    $candidate = mb_convert_encoding($content, 'ISO-8859-1', 'UTF-8');
+    // Verify the result is valid UTF-8
+    if (mb_check_encoding($candidate, 'UTF-8')) {
+        $content = $candidate;
+        $repaired = true;
+    }
+}
+
 // Write file (atomic via temp file + rename)
 $path    = FILE_DIR . DIRECTORY_SEPARATOR . $file;
 $tmpPath = $path . '.tmp.' . getmypid();
-$written = file_put_contents($tmpPath, $data['content']);
+$written = file_put_contents($tmpPath, $content);
 
 if ($written === false) {
     http_response_code(500);
@@ -75,9 +91,13 @@ if (!rename($tmpPath, $path)) {
     exit;
 }
 
-echo json_encode([
+$response = [
     'ok'        => true,
     'file'      => $file,
     'bytes'     => $written,
     'updatedAt' => gmdate('c'),
-]);
+];
+if ($repaired) {
+    $response['warning'] = 'Double-encoded UTF-8 detected and repaired (Windows cp1252 issue)';
+}
+echo json_encode($response);
