@@ -1077,23 +1077,16 @@ async function enrichLinkedInUrls(acceptedJobs, prevLinkedinUrlCache) {
       if (!slug) { if (key) cache[key] = null; continue; }
 
       // Find a URL whose slug contains the company name after "-at-"
-      // AND whose title portion (before "-at-") contains key words from the job title.
+      // AND whose title slug exactly matches the job title.
       // LinkedIn URLs look like: /jobs/view/{title-slug}-at-{company-slug}-{id}
-      const titleWords = String(job.title || '')
+      // Job titles are identical across job boards, so we require an exact match
+      // to avoid dangerous false matches (e.g., "Game Developer" → "Senior Game Developer").
+      const titleSlug = String(job.title || '')
         .toLowerCase()
-        .replace(/[^a-z0-9]+/g, ' ')
-        .split(/\s+/)
-        .filter((w) => w.length > 2 && !['the', 'and', 'for', 'with'].includes(w));
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
 
-      // Score each URL by how many title words appear in the title portion,
-      // then pick the best match. Require a minimum match quality to avoid
-      // grabbing the wrong job (e.g., "Gameplay Engineer" matching "Senior
-      // Software Engineer (Fullstack)" just because both contain "engineer").
-      // Minimum: at least half of title words must match, and at least 2 words
-      // (or all words if the title has fewer than 2 significant words).
-      const minHits = titleWords.length <= 2 ? titleWords.length : Math.ceil(titleWords.length / 2);
-      let bestUrl = null;
-      let bestHits = 0;
+      let match = null;
       for (const u of urls) {
         const lower = u.toLowerCase();
         const companyMatch = lower.includes(`-at-${slug}-`) || lower.endsWith(`-at-${slug}`);
@@ -1101,20 +1094,18 @@ async function enrichLinkedInUrls(acceptedJobs, prevLinkedinUrlCache) {
         const atIdx = lower.indexOf(`-at-${slug}`);
         if (atIdx < 0) continue;
         const titlePart = lower.slice(lower.lastIndexOf('/') + 1, atIdx);
-        const hits = titleWords.length === 0 ? 0 : titleWords.filter((w) => titlePart.includes(w)).length;
-        if (hits >= minHits && hits > bestHits) { bestHits = hits; bestUrl = u; }
+        if (titlePart === titleSlug) { match = u; break; }
       }
-      const match = bestUrl;
 
       if (match) {
         const cleanUrl = match.split(/['">\s]/)[0];
-        log.info(`LinkedIn enriched: "${job.title}" at ${job.company} → ${cleanUrl} (${bestHits}/${titleWords.length} words matched)`);
+        log.info(`LinkedIn enriched: "${job.title}" at ${job.company} → ${cleanUrl}`);
         job.applyUrl = cleanUrl;
         enrichedCount++;
         if (key) cache[key] = cleanUrl;
       } else {
         if (urls.some(u => u.toLowerCase().includes(`-at-${slug}`))) {
-          log.info(`LinkedIn enrichment skipped: "${job.title}" at ${job.company} — company found but no title match (needed ${minHits}/${titleWords.length} words)`);
+          log.info(`LinkedIn enrichment skipped: "${job.title}" at ${job.company} — company found on LinkedIn but no exact title match`);
         }
         if (key) cache[key] = null; // company found on LinkedIn but no matching job
       }
