@@ -2007,11 +2007,35 @@ Actor.main(async () => {
   //    "Closed" results are cached across runs to avoid re-pinging LinkedIn for dead jobs.
   //    "Open" results are NOT cached — we re-check each run since jobs can close any time.
   const linkedinClosedCache = new Set(scoreCache?.linkedinClosedUrls || []);
+  let linkedinClosedCount = 0;
+  let linkedinClosedCacheHits = 0;
+
+  async function isLinkedInJobClosed(jobUrl) {
+    try {
+      const res = await fetch(jobUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; job-pipeline/1.0)' },
+        signal: AbortSignal.timeout(10000),
+      });
+      const html = await res.text();
+      return html.includes('No longer accepting applications');
+    } catch {
+      return false; // on error, assume still open (don't penalize)
+    }
+  }
+
+  function markJobClosed(r) {
+    linkedinClosedCount++;
+    const jobUrl = r.applyUrl || r.url || '';
+    linkedinClosedCache.add(jobUrl);
+    r.evaluation.accepted = false;
+    r.evaluation.accept = false;
+    r.evaluation.red_flags = [...(r.evaluation.red_flags || []), 'LinkedIn: No longer accepting applications'];
+    r.evaluation.reason_short = `${r.evaluation.reason_short || ''} [CLOSED]`.trim();
+  }
+
   const linkedinAccepted = results.filter(
     (r) => r?.evaluation?.accepted && /linkedin\.com\/jobs/i.test(r.applyUrl || r.url || '')
   );
-  let linkedinClosedCount = 0;
-  let linkedinClosedCacheHits = 0;
 
   if (linkedinAccepted.length > 0) {
     // Mark jobs known-closed from cache (no HTTP fetch needed)
@@ -2020,11 +2044,7 @@ Actor.main(async () => {
       const jobUrl = r.applyUrl || r.url || '';
       if (linkedinClosedCache.has(jobUrl)) {
         linkedinClosedCacheHits++;
-        linkedinClosedCount++;
-        r.evaluation.accepted = false;
-        r.evaluation.accept = false;
-        r.evaluation.red_flags = [...(r.evaluation.red_flags || []), 'LinkedIn: No longer accepting applications'];
-        r.evaluation.reason_short = `${r.evaluation.reason_short || ''} [CLOSED]`.trim();
+        markJobClosed(r);
       } else {
         toCheck.push(r);
       }
@@ -2037,19 +2057,6 @@ Actor.main(async () => {
     if (toCheck.length > 0) {
       log.info(`Checking ${toCheck.length} accepted LinkedIn jobs for closed listings...`);
 
-      async function isLinkedInJobClosed(jobUrl) {
-        try {
-          const res = await fetch(jobUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; job-pipeline/1.0)' },
-            signal: AbortSignal.timeout(10000),
-          });
-          const html = await res.text();
-          return html.includes('No longer accepting applications');
-        } catch {
-          return false; // on error, assume still open (don't penalize)
-        }
-      }
-
       // Check in batches of 10 to avoid overwhelming LinkedIn
       const LI_BATCH = 10;
       for (let i = 0; i < toCheck.length; i += LI_BATCH) {
@@ -2058,15 +2065,7 @@ Actor.main(async () => {
           batch.map((r) => isLinkedInJobClosed(r.applyUrl || r.url || ''))
         );
         for (let k = 0; k < batch.length; k++) {
-          if (checks[k]) {
-            linkedinClosedCount++;
-            const jobUrl = batch[k].applyUrl || batch[k].url || '';
-            linkedinClosedCache.add(jobUrl); // cache for future runs
-            batch[k].evaluation.accepted = false;
-            batch[k].evaluation.accept = false;
-            batch[k].evaluation.red_flags = [...(batch[k].evaluation.red_flags || []), 'LinkedIn: No longer accepting applications'];
-            batch[k].evaluation.reason_short = `${batch[k].evaluation.reason_short || ''} [CLOSED]`.trim();
-          }
+          if (checks[k]) markJobClosed(batch[k]);
         }
         // Small delay between batches to be polite
         if (i + LI_BATCH < toCheck.length) await new Promise((r) => setTimeout(r, 1000));
@@ -2102,6 +2101,35 @@ Actor.main(async () => {
   //    Uses a persistent cache to avoid re-searching LinkedIn for known jobs.
   const { enrichedCount: linkedinEnrichCount, linkedinUrlCache } =
     await enrichLinkedInUrls(acceptedJobs, scoreCache?.linkedinUrlCache);
+
+  // 3b) Check newly-enriched LinkedIn URLs for "No longer accepting applications".
+  //     Jobs sourced from Built In / Fantastic may have been enriched with a LinkedIn URL
+  //     in step 3 — those URLs weren't checked in step 2 since they didn't exist yet.
+  if (linkedinEnrichCount > 0) {
+    const enrichedWithLinkedin = acceptedJobs.filter(
+      (r) => r?.evaluation?.accepted && /linkedin\.com\/jobs/i.test(r.applyUrl || '')
+    );
+    // Only check jobs whose LinkedIn URL isn't already in the closed cache
+    const enrichedToCheck = enrichedWithLinkedin.filter(
+      (r) => !linkedinClosedCache.has(r.applyUrl || '')
+    );
+    if (enrichedToCheck.length > 0) {
+      log.info(`Checking ${enrichedToCheck.length} enriched LinkedIn URLs for closed listings...`);
+      const checks = await Promise.all(
+        enrichedToCheck.map((r) => isLinkedInJobClosed(r.applyUrl || ''))
+      );
+      let enrichedClosedCount = 0;
+      for (let k = 0; k < enrichedToCheck.length; k++) {
+        if (checks[k]) {
+          markJobClosed(enrichedToCheck[k]);
+          enrichedClosedCount++;
+        }
+      }
+      if (enrichedClosedCount > 0) {
+        log.info(`LinkedIn enriched-URL check: ${enrichedClosedCount} closed out of ${enrichedToCheck.length} checked.`);
+      }
+    }
+  }
 
   // --- Post-scoring salary scrape for accepted jobs missing salary ---
   const salaryEnrichment = { attempted: 0, found: 0, failed: 0 };
