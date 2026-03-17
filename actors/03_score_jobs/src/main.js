@@ -339,36 +339,13 @@ function lookupCache(cacheMap, job) {
  * job.workMode:   'Remote' | 'Hybrid' | 'On-Site' | ''
  * job.commutable: true | false | null (set by collector's normalizeLocationFields)
  *
- * Remote jobs pass unless located in a foreign country (ISO3 code check).
+ * Remote jobs always pass (foreign Remote is fine — no location restriction).
  */
-// Foreign ISO3 codes that appear in collector-normalized locations.
-// If a Remote job's location is one of these, reject it (likely requires foreign work authorization).
-const FOREIGN_ISO3 = new Set([
-  'AFG','ALB','DZA','AND','AGO','ARG','ARM','AUS','AUT','AZE','BHS','BHR','BGD','BRB','BLR',
-  'BEL','BLZ','BEN','BTN','BOL','BIH','BWA','BRA','BRN','BGR','BFA','BDI','KHM','CMR','CAN',
-  'CPV','CAF','TCD','CHL','CHN','COL','COM','COG','COD','CRI','CIV','HRV','CUB','CYP','CZE',
-  'DNK','DJI','DMA','DOM','ECU','EGY','SLV','GNQ','ERI','EST','SWZ','ETH','FJI','FIN','FRA',
-  'GAB','GMB','GEO','DEU','GHA','GRC','GTM','GIN','GNB','GUY','HTI','HND','HUN','ISL','IND',
-  'IDN','IRN','IRQ','IRL','ISR','ITA','JAM','JPN','JOR','KAZ','KEN','KIR','PRK','KOR','KWT',
-  'KGZ','LAO','LVA','LBN','LSO','LBR','LBY','LIE','LTU','LUX','MDG','MWI','MYS','MDV','MLI',
-  'MLT','MHL','MRT','MUS','MEX','FSM','MDA','MCO','MNG','MNE','MAR','MOZ','MMR','NAM','NRU',
-  'NPL','NLD','NZL','NIC','NER','NGA','MKD','NOR','OMN','PAK','PLW','PAN','PNG','PRY','PER',
-  'PHL','POL','PRT','QAT','ROU','RUS','RWA','KNA','LCA','VCT','WSM','SMR','STP','SAU','SEN',
-  'SRB','SYC','SLE','SGP','SVK','SVN','SLB','SOM','ZAF','SSD','ESP','LKA','SDN','SUR','SWE',
-  'CHE','SYR','TWN','TJK','TZA','THA','TLS','TGO','TON','TTO','TUN','TUR','TKM','TUV','UGA',
-  'UKR','ARE','GBR','URY','UZB','VUT','VEN','VNM','YEM','ZMB','ZWE',
-]);
-
 function computeLocationOk(job) {
   // If applicantLocationRequirements explicitly excludes US, reject even if Remote
   if (job._usExcluded) return 'no';
   const isRemote = String(job.workMode || '') === 'Remote';
-  if (isRemote) {
-    // Remote + foreign ISO3 location → reject (likely requires foreign work authorization)
-    const loc = String(job.location || '').trim().toUpperCase();
-    if (FOREIGN_ISO3.has(loc)) return 'no';
-    return 'yes';
-  }
+  if (isRemote) return 'yes';
   if (job.commutable === true) return 'yes';
   if (job.commutable === false) return 'no';
   // commutable is null/undefined → unknown (no location, bare "USA", ambiguous city)
