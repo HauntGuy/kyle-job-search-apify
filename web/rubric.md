@@ -1,52 +1,52 @@
-# Rubric: Kyle job search (v22)
+# Rubric: Kyle job search (v23)
 
-Evaluate a job posting for **Kyle Forgaard**. Return JSON with: `accept` (bool), `score` (0–100), `confidence` (0.0–1.0), `reason_short` (1 sentence), `reasons` (short bullets), `red_flags` (short bullets), `tags` (short tags), `salary_extracted` (string or ""), `company_url` (string or ""), `role` (array from: "Game Designer", "Programmer", "EdTech", "App Support", "Customer Success" — may combine). **`role` rules:** Use "Programmer" ONLY for roles where the primary job duty is writing code (Unity dev, C# dev, gameplay engineer). Solutions Engineer, Sales Engineer, Implementation roles, and Support roles are NOT "Programmer" — classify them as "Customer Success" or "App Support".
+Evaluate a job posting for Kyle Forgaard. Return JSON with: accept (bool), score (0-100), confidence (0.0-1.0), reason_short (1 sentence), reasons (short bullets), red_flags (short bullets), tags (short tags), salary_extracted (string or ""), company_url (string or ""), role (array from: "Game Designer", "Programmer", "EdTech", "App Support", "Customer Success" -- may combine). role rules: Use "Programmer" ONLY for roles where the primary job duty is writing code (Unity dev, C# dev, gameplay engineer). Solutions Engineer, Sales Engineer, Implementation roles, and Support roles are NOT "Programmer" -- classify them as "Customer Success" or "App Support".
 
-Jobs with bad locations have already been filtered out. Do not evaluate location. If the job is Remote, do not penalize it for the company's country or office location — Kyle can work any Remote job from anywhere. A job description in a foreign language is NOT a deal-breaker if the role is Remote — many global companies post in multiple languages to attract candidates worldwide. However, if the description explicitly restricts applicants to a specific region **outside** Massachusetts/New England/the Northeastern US (e.g., "only applicants in British Columbia," "must reside in Texas"), add a red flag and score at **max 50**. Kyle lives in Lexington, MA.
+Jobs with bad locations have already been filtered out. Do not evaluate location. If the job is Remote, do not penalize it for the company's country or office location -- Kyle can work any Remote job from anywhere. A job description in a foreign language is NOT a deal-breaker if the role is Remote -- many global companies post in multiple languages to attract candidates worldwide. However, if the description explicitly restricts applicants to a specific region outside Massachusetts/New England/the Northeastern US (e.g., "only applicants in British Columbia," "must reside in Texas"), add a red flag and score at max 50. Kyle lives in Lexington, MA.
 
-Jobs with seniority titles (Senior, Sr., Lead, Manager, Principal, Director, Head, VP, Chief, Staff) have already been filtered out by title. However, some jobs have generic titles but the **description** reveals the role is actually senior-level (e.g., "we are looking for a Senior Unity Engineer" or "Lead Designer position"). If the description makes clear the role requires senior/lead/staff/principal/director-level experience, score it at **max 50** regardless of the job title.
+Jobs with seniority titles (Senior, Sr., Lead, Manager, Principal, Director, Head, VP, Chief, Staff) have already been filtered out by title. However, some jobs have generic titles but the description reveals the role is actually senior-level (e.g., "we are looking for a Senior Unity Engineer" or "Lead Designer position"). If the description makes clear the role requires senior/lead/staff/principal/director-level experience, score it at max 50 regardless of the job title.
 
 ## Candidate
 
-- **Software engineering bachelor of science in Game Design and Development**; 7 years in games. Game Designer roles are the best possible fit. Kyle easily meets any game design experience requirement up to 7 years — never penalize a game design role for requiring experience.
-- 7 years **Unity + C#**, client-side gameplay/UI/tools, mobile/casual games.
+- Software engineering bachelor of science in Game Design and Development; 7 years in games. Game Designer roles are the best possible fit. Kyle easily meets any game design experience requirement up to 7 years -- never penalize a game design role for requiring experience.
+- 7 years Unity + C#, client-side gameplay/UI/tools, mobile/casual games.
 - Some C++ and Lua; open to learning more.
 - Unity 2D preferred; 3D OK if not lead/architect of a large 3D system.
-- **Excels at customer-facing work**: demos, onboarding, support, stakeholder communication.
-- **Entry-level for customer-facing roles.** Kyle has never held a customer success, sales engineering, technical support, or account management title. Reject jobs that explicitly require **2+ years** of experience in those specific roles. **DO NOT reject based on "1 year experience required" or "1+ years" — that is within the acceptable range.** Many companies treat 1-year requirements as a soft filter and will interview strong candidates with adjacent experience.
-- **Domain-specific requirements are deal-breakers for Tier 3.** If a Tier 3 (adjacent) job requires industry/domain experience outside of software/technology (e.g., manufacturing, healthcare, financial services, legal, construction), reject it — even if the company itself is a tech/SaaS company serving that industry. This rule does NOT apply to Tier 1 or Tier 2 jobs — evaluate those normally based on game design and Unity/C# fit.
+- Excels at customer-facing work: demos, onboarding, support, stakeholder communication.
+- Entry-level for customer-facing roles. Kyle has never held a customer success, sales engineering, technical support, or account management title. Reject jobs that explicitly require 2+ years of experience in those specific roles. DO NOT reject based on "1 year experience required" or "1+ years" -- that is within the acceptable range. Many companies treat 1-year requirements as a soft filter and will interview strong candidates with adjacent experience.
+- Domain-specific requirements are deal-breakers for Tier 3. If a Tier 3 (adjacent) job requires industry/domain experience outside of software/technology (e.g., manufacturing, healthcare, financial services, legal, construction), reject it -- even if the company itself is a tech/SaaS company serving that industry. This rule does NOT apply to Tier 1 or Tier 2 jobs -- evaluate those normally based on game design and Unity/C# fit.
 - No bilingual skills.
 
-Unity is not just for games — it's used in EdTech, architecture, healthcare, automotive, film, manufacturing, and retail.
+Unity is not just for games -- it's used in EdTech, architecture, healthcare, automotive, film, manufacturing, and retail.
 
 ## Role tiers
 
-**Tier 1 — Game Designer** (best possible fit, score 95–100):
-Game Designer, Level Designer, Systems Designer, Combat Designer, Economy Designer, Technical Game Designer. These are rare and highly competitive — always accept them.
+Tier 1 -- Game Designer (best possible fit, score 95-100):
+Game Designer, Level Designer, Systems Designer, Combat Designer, Economy Designer, Technical Game Designer. These are rare and highly competitive -- always accept them.
 
-**Internships:** Score internships at **max 65**, even for Tier 1/2 roles. Kyle is 33 years old with 7 years of professional experience — internships target recent college graduates and are not worth tracking. Do not score them higher than 65.
+Internships: Score internships at max 65, even for Tier 1/2 roles. Kyle is 33 years old with 7 years of professional experience -- internships target recent college graduates and are not worth tracking. Do not score them higher than 65.
 
-**Tier 2 — Programmer** (strongest technical fit, score 85–95):
+Tier 2 -- Programmer (strongest technical fit, score 85-95):
 Unity Developer, C# client-side (WPF/MAUI/Avalonia), Gameplay Engineer, UI Programmer, Tools Engineer, Technical Designer with scripting.
 
-**Tier 3 — Adjacent** (score 70–80, BUT only at technology/software companies):
-- Sales Engineer — pre-sales technical roles with demos/POCs
-- Implementation Specialist — onboarding and configuring software
-- Application Support — configuring/troubleshooting software products (NOT phone help desk)
+Tier 3 -- Adjacent (score 70-80, BUT only at technology/software companies):
+- Sales Engineer -- pre-sales technical roles with demos/POCs
+- Implementation Specialist -- onboarding and configuring software
+- Application Support -- configuring/troubleshooting software products (NOT phone help desk)
 - EdTech roles where game dev experience adds value
 
-**CRITICAL — "tech company" test for Tier 3:** Kyle wants to work for companies whose core business IS software/technology. A software company that serves dentists or farmers = GOOD (it's a tech company). A tractor manufacturer, hospital chain, bank, or retailer with an IT department = BAD (NOT a tech company). **If the employer is not a technology/software company, score 40–60 max regardless of title.**
+CRITICAL -- "tech company" test for Tier 3: Kyle wants to work for companies whose core business IS software/technology. A software company that serves dentists or farmers = GOOD (it is a tech company). A tractor manufacturer, hospital chain, bank, or retailer with an IT department = BAD (NOT a tech company). If the employer is not a technology/software company, score 40-60 max regardless of title.
 
-Tier 3 at a real tech company with acceptable salary → score 70–80. Do not penalize these for lacking Unity/C# — Kyle's customer-facing skills make them strong fits.
+Tier 3 at a real tech company with acceptable salary -- score 70-80. Do not penalize these for lacking Unity/C# -- Kyle's customer-facing skills make them strong fits.
 
 ## Compensation
 
-- Prefer >= $60K/year. If max < $60K with no equity/commission upside → strong negative.
-- **Missing salary = no penalty.** Most postings omit it.
+- Prefer >= $60K/year. If max < $60K with no equity/commission upside -- strong negative.
+- Missing salary = no penalty. Most postings omit it.
 
 ## Work-life balance
 
-- Prefer standard 8-to-5. Frequent weekend travel or mandatory crunch → strong negative.
+- Prefer standard 8-to-5. Frequent weekend travel or mandatory crunch -- strong negative.
 - Occasional travel (quarterly onsite, conferences) is fine.
 
 ## Deal-breakers (accept=false)
@@ -55,23 +55,23 @@ Tier 3 at a real tech company with acceptable salary → score 70–80. Do not p
 - VR/XR/AR required (optional mention OK)
 - Android SDK / native Android game dev required
 - Military / defense / weapons (general simulation OK)
-- Art/artist/visual-design roles (Technical Artist, 3D Artist, etc.) — but NOT Game Designer (that's Tier 1)
+- Art/artist/visual-design roles (Technical Artist, 3D Artist, etc.) -- but NOT Game Designer (that is Tier 1)
 - Non-software roles (pure sales, marketing, HR) or scams
 - General help-desk / Tier 1 phone support
 - Visa-targeting (OPT/CPT/H1B-only)
 - Travel > 30% of time
 - Requires 2+ years of experience in customer success, sales engineering, technical support, or account management
-- Requires a graduate degree (Master's, PhD, MBA) — Kyle has a bachelor's in game design
-- Requires bilingual proficiency — Kyle speaks English only
+- Requires a graduate degree (Master's, PhD, MBA) -- Kyle has a bachelor's in game design
+- Requires bilingual proficiency -- Kyle speaks English only
 
 ## Scoring
 
-- 95–100: Game Designer (Tier 1)
-- 85–95: strong Tier 2 (Unity/C# client-side, credible tech company)
-- 70–84: solid Tier 2 with caveats, OR Tier 3 at a real tech company
-- 50–69: borderline — Tier 3 at a non-tech company, or weak fit
-- 0–49: not a fit
+- 95-100: Game Designer (Tier 1)
+- 85-95: strong Tier 2 (Unity/C# client-side, credible tech company)
+- 70-84: solid Tier 2 with caveats, OR Tier 3 at a real tech company
+- 50-69: borderline -- Tier 3 at a non-tech company, or weak fit
+- 0-49: not a fit
 
-**Repeat: The employer must be a technology/software company for Tier 3 to score 70+.** Implementation Specialist at HubSpot → 75. Implementation Specialist at John Deere → 50. The company's core business matters.
+Repeat: The employer must be a technology/software company for Tier 3 to score 70+. Implementation Specialist at HubSpot -- 75. Implementation Specialist at John Deere -- 50. The company's core business matters.
 
 Output valid JSON only, no markdown. Be concise.
