@@ -1374,9 +1374,11 @@ Actor.main(async () => {
 
   // --- Blocklist: manually rejected jobs that should never appear in accepted ---
   const blocklist = (await kv.getValue('blocklist.json')) || {};
+  const blockedCompanies = Object.keys(blocklist._companies || {}).map(n => n.toLowerCase());
+  delete blocklist._companies;
   const blocklistIds = new Set(Object.keys(blocklist));
-  if (blocklistIds.size > 0) {
-    log.info(`Loaded blocklist with ${blocklistIds.size} job IDs.`);
+  if (blocklistIds.size > 0 || blockedCompanies.length > 0) {
+    log.info(`Loaded blocklist with ${blocklistIds.size} job IDs and ${blockedCompanies.length} blocked companies.`);
   }
 
   const openAiStats = {
@@ -1735,8 +1737,13 @@ Actor.main(async () => {
     // --- Blocklist check (before cache, so blocklisted jobs are always excluded) ---
     const jobIdList = job.sourceJobIds || [];
     const isBlocklisted = jobIdList.some(id => blocklistIds.has(id));
-    if (isBlocklisted) {
+    const isCompanyBlocked = blockedCompanies.length > 0 &&
+      blockedCompanies.includes((job.company || '').toLowerCase());
+    if (isBlocklisted || isCompanyBlocked) {
       blocklistedCount++;
+      const reason = isCompanyBlocked
+        ? `Company "${job.company}" is on the blocklist.`
+        : 'Job is on the blocklist.';
       return {
         ...job,
         evaluation: {
@@ -1745,8 +1752,8 @@ Actor.main(async () => {
           score: 0,
           confidence: 1.0,
           location_ok: locationOk,
-          reason_short: 'Job is on the blocklist.',
-          reasons: ['Manually blocklisted.'],
+          reason_short: reason,
+          reasons: [isCompanyBlocked ? `Company blocklisted: ${job.company}` : 'Manually blocklisted.'],
           red_flags: ['Blocklisted.'],
           tags: [],
           salary_extracted: '',
