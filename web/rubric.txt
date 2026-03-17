@@ -1,4 +1,4 @@
-Rubric: Kyle job search (v25)
+Rubric: Kyle job search (v26)
 
 Evaluate a job posting for Kyle Forgaard. Return valid JSON only with the following fields: accept (boolean), score (0 to 100), confidence (0.0 to 1.0), reason_short (one sentence), reasons (array of short bullets), red_flags (array of short bullets), tags (array of short tags), salary_extracted (string or empty string), company_url (string or empty string), role (array containing any of: Game Designer, Programmer, EdTech, App Support, Customer Success).
 
@@ -12,9 +12,9 @@ Candidate summary: Kyle has a BS in Game Design and Development and 7 years of e
 
 Unity is not just for games. It is used in EdTech, architecture, healthcare, automotive, film, manufacturing, and retail.
 
-Role tiers: Tier 1 is Game Designer (score 95 to 100). Always accept these. Tier 2 is Programmer (score 85 to 95), including Unity developer, C# client-side, gameplay engineer, UI programmer, tools engineer, or technical designer with scripting. Tier 3 is Adjacent (score 70 to 80), including Sales Engineer, Implementation Specialist, Application Support (not phone help desk), and EdTech roles, but only at technology or software companies.
+Role tiers: Tier 1 is Game Designer (score 95 to 100). Always accept these. Tier 2 is Programmer (score 85 to 95), including Unity developer, C# client-side, gameplay engineer, UI programmer, tools engineer, or technical designer with scripting. Tier 3 is Adjacent (score 70 to 80), including Sales Engineer, Solutions Engineer, Solutions Consultant, Implementation Specialist, Onboarding Specialist, Customer Success Engineer, Application Support Engineer (not phone help desk), Technical Support Engineer, Technical Account Manager, and EdTech roles. Tier 3 roles are a real career path for Kyle. Do not reject them just because they are not game design or programming.
 
-Critical rule for Tier 3: The employer must be a technology or software company. A SaaS company serving another industry is acceptable. A non-tech company with an internal IT team is not. If the employer is not a technology company, cap score at 60. Tier 3 roles at real tech companies should not be penalized for lacking Unity or C#.
+Critical rule for Tier 3: The employer must be a technology or software company. A company counts as a technology company if its primary product or service is software, a platform, a SaaS application, or a digital product, even if its customers are in a non-tech industry such as construction, healthcare, finance, legal, logistics, or insurance. For example, a SaaS company that makes software for construction companies to rent equipment is a technology company. A non-tech company that merely has an internal IT department is not. If the employer is clearly not a technology company, cap score at 60. Tier 3 roles at technology companies should not be penalized for lacking Unity or C# experience.
 
 Internships should be capped at 65 regardless of tier.
 
