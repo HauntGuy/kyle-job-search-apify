@@ -131,7 +131,7 @@
       "type": "gjd",
       "enabled": true,
       "query": "unity developer",
-      "maxPages": 10,
+      "maxPages": 20,
       "crawlDelayMs": 5000,
       "fetchDetails": true
     },
@@ -140,7 +140,7 @@
       "type": "gjd",
       "enabled": true,
       "query": "game developer",
-      "maxPages": 10,
+      "maxPages": 20,
       "crawlDelayMs": 5000,
       "fetchDetails": true
     },
@@ -149,7 +149,7 @@
       "type": "gjd",
       "enabled": true,
       "query": "game designer",
-      "maxPages": 10,
+      "maxPages": 20,
       "crawlDelayMs": 5000,
       "fetchDetails": true
     },
@@ -158,7 +158,7 @@
       "type": "gjd",
       "enabled": true,
       "query": "level designer",
-      "maxPages": 10,
+      "maxPages": 20,
       "crawlDelayMs": 5000,
       "fetchDetails": true
     },
@@ -167,7 +167,7 @@
       "type": "gjd",
       "enabled": true,
       "query": "gameplay engineer",
-      "maxPages": 10,
+      "maxPages": 20,
       "crawlDelayMs": 5000,
       "fetchDetails": true
     },
