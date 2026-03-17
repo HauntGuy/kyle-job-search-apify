@@ -58,16 +58,23 @@ if (!isset($data['content']) || !is_string($data['content'])) {
 }
 
 // Repair double-encoded UTF-8 (Windows cp1252 issue).
-// When Python on Windows pipes Unicode through cp1252 stdout, em-dashes (E2 80 94)
-// become C3 A2 C2 80 C2 94 (each byte re-encoded as UTF-8). Detect and fix this.
-// Signature: C3 A2 followed by C2 80..C2 BF is a double-encoded sequence.
+// When Python on Windows pipes Unicode through cp1252 stdout, UTF-8 multi-byte
+// sequences get double-encoded. For example, em-dash (UTF-8: E2 80 94) becomes:
+//   E2 → â (cp1252) → C3 A2 (re-encoded as UTF-8)
+//   80 → € (cp1252 U+20AC) → E2 82 AC (re-encoded as UTF-8)
+//   94 → " (cp1252 U+201D) → E2 80 9D (re-encoded as UTF-8)
+// Detection: C3 A2 is the character â, which is the telltale sign of a double-encoded
+// 3-byte UTF-8 sequence (any char starting with E2, like —, –, →, ", ", etc.).
+// The character â (U+00E2) is extremely unlikely in English rubric/config text.
 $content = $data['content'];
 $repaired = false;
-if (preg_match('/\xC3\xA2[\xC2\xC3][\x80-\xBF]/', $content)) {
-    // Attempt repair: decode UTF-8 bytes as Latin-1 to undo the double-encoding
-    $candidate = mb_convert_encoding($content, 'ISO-8859-1', 'UTF-8');
-    // Verify the result is valid UTF-8
-    if (mb_check_encoding($candidate, 'UTF-8')) {
+if (strpos($content, "\xC3\xA2") !== false) {
+    // Attempt repair: interpret UTF-8 chars as Windows-1252 byte values to recover
+    // the original UTF-8 bytes. Must use Windows-1252 (not ISO-8859-1) because
+    // cp1252 maps 0x80→€(U+20AC), 0x94→"(U+201D), etc. which ISO-8859-1 can't represent.
+    $candidate = mb_convert_encoding($content, 'Windows-1252', 'UTF-8');
+    // Verify the result is valid UTF-8 (a successful repair produces clean UTF-8)
+    if ($candidate !== false && mb_check_encoding($candidate, 'UTF-8')) {
         $content = $candidate;
         $repaired = true;
     }
