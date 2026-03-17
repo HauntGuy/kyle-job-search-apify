@@ -1,19 +1,19 @@
 <?php
 // update_config.php
-// Allows Claude Code to automatically update rubric.md and config.json via POST.
+// Allows Claude Code to automatically update rubric.txt and config.json via POST.
 //
 // Deploy to: http://forgaard.com/jobsearch/update_config.php
 //
 // Called by Claude with:
 //   curl -s -X POST https://forgaard.com/jobsearch/update_config.php \
 //     -H "Content-Type: application/json" \
-//     -d '{"key":"...","file":"rubric.md","content":"..."}'
+//     -d '{"key":"...","file":"rubric.txt","content":"..."}'
 //
-// Returns JSON: {"ok":true,"file":"rubric.md","bytes":1234,"updatedAt":"..."}
+// Returns JSON: {"ok":true,"file":"rubric.txt","bytes":1234,"updatedAt":"..."}
 
 // ---- Configuration ----
 define('API_KEY', 'gvxCbedqoUdg21d52KIiqXBpj4Tei00v-N8o_gQgcsk');
-define('ALLOWED_FILES', ['rubric.md', 'config.json']);
+define('ALLOWED_FILES', ['rubric.txt', 'config.json']);
 define('FILE_DIR', __DIR__);  // Writes files into the same directory as this script
 
 // ---- Main ----

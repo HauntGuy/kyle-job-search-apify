@@ -23,7 +23,7 @@ This repo contains a modular Apify pipeline designed to:
 Copy these two example files to your website (FTP/cPanel File Manager):
 
 - `web/config.example.json`  →  `http://forgaard.com/jobsearch/config.json`
-- `web/rubric.example.md`    →  `http://forgaard.com/jobsearch/rubric.md`
+- `web/rubric.example.md`    →  `http://forgaard.com/jobsearch/rubric.txt`
 
 You can edit these later (and eventually your web form can generate them).
 

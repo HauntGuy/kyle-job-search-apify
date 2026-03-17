@@ -284,7 +284,7 @@ function truncate(s, maxChars) {
 const SCORING_FORMAT_VERSION = 'v11'; // v11: fix applicantLocationRequirements for Remote jobs; blocklist; Built In JSON-LD enrichment
 
 function extractRubricVersion(rubricText) {
-  const match = String(rubricText || '').match(/^#\s+Rubric:.*?\((v\d+)\)/i);
+  const match = String(rubricText || '').match(/^(?:#\s+)?Rubric:.*?\((v\d+)\)/i);
   return match ? match[1] : null;
 }
 

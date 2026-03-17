@@ -241,7 +241,7 @@
     "gateOnLocation": false,
     "concurrency": 8,
     "maxDescriptionChars": 12000,
-    "rubricUrl": "http://forgaard.com/jobsearch/rubric.md",
+    "rubricUrl": "http://forgaard.com/jobsearch/rubric.txt",
     "debugJobIds": ["B:2540727"]
   },
   "notify": {

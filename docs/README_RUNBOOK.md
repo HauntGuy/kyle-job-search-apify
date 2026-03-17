@@ -14,7 +14,7 @@ This repo powers a nightly Apify pipeline that finds programming jobs for Kyle F
   http://forgaard.com/jobsearch/config.json
 
 - **Live rubric (LLM criteria):**
-  http://forgaard.com/jobsearch/rubric.md
+  http://forgaard.com/jobsearch/rubric.txt
 
 ## Architecture
 
@@ -22,7 +22,7 @@ Actors (Apify):
 - `00_run_pipeline` — orchestrator (runs everything in order)
 - `01_collect_jobs` — collects jobs from enabled sources in config.json
 - `02_merge_dedup` — merges sources + dedupes into a single pool
-- `03_score_jobs` — LLM scoring + filtering using rubric.md
+- `03_score_jobs` — LLM scoring + filtering using rubric.txt
 - `04_notify_email` — emails `accepted.csv`
 - `99_diagnostics_dump` — writes the HTML job search log to a GitHub Gist
 
@@ -95,4 +95,4 @@ When changing search behavior:
 - Edit `config.json` on forgaard.com (no code change required)
 
 When changing scoring criteria:
-- Edit `rubric.md` on forgaard.com (no code change required)
+- Edit `rubric.txt` on forgaard.com (no code change required)

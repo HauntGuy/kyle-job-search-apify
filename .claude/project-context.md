@@ -39,8 +39,8 @@ curl --ssl-no-revoke -s "https://api.apify.com/v2/acts/pigletsquid~{ACTOR}/build
 
 ## External Config (manually updated by Randy)
 - **config.json:** `http://forgaard.com/jobsearch/config.json`
-- **rubric.md:** `http://forgaard.com/jobsearch/rubric.md`
-- After changing `web/rubric.md` in the repo, Randy must manually upload it to forgaard.com
+- **rubric.txt:** `http://forgaard.com/jobsearch/rubric.txt`
+- After changing `web/rubric.txt` in the repo, Randy must manually upload it to forgaard.com
 
 ## Diagnostics Gist
 - **Gist ID:** `9db067b3e3d472ddafd58fd3705ed10c`
