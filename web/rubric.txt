@@ -1,4 +1,4 @@
-Rubric: Kyle job search (v26)
+Rubric: Kyle job search (v27)
 
 Evaluate a job posting for Kyle Forgaard. Return valid JSON only with the following fields: accept (boolean), score (0 to 100), confidence (0.0 to 1.0), reason_short (one sentence), reasons (array of short bullets), red_flags (array of short bullets), tags (array of short tags), salary_extracted (string or empty string), company_url (string or empty string), role (array containing any of: Game Designer, Programmer, EdTech, App Support, Customer Success).
 
@@ -22,7 +22,7 @@ Compensation: Prefer 60K or higher. If the maximum salary is below 60K with no u
 
 Work-life balance: Prefer standard hours. Frequent weekend work or mandatory crunch is a strong negative. Occasional travel is acceptable.
 
-Deal-breakers (accept = false): backend or full-stack or React-heavy requirements (ASP.NET, Node.js, TypeScript, REST APIs, SQL, ODBC, JDBC), VR/AR/XR required, Android SDK or native Android game development, military or defense, art or artist roles (except Game Designer), non-software roles, scams, phone help desk roles, visa-targeting roles, travel over 30 percent, 2 or more years required in customer success or related roles, graduate degree required, bilingual requirement.
+Deal-breakers (accept = false): backend or full-stack or React-heavy requirements (ASP.NET, Node.js, TypeScript, REST APIs, SQL, ODBC, JDBC), VR/AR/XR required, Android SDK or native Android game development, non-Unity game engine or platform required (Unreal, MonoGame, Solar2D, Defold, Godot, CryEngine, RPG Maker, GameMaker, Construct, Cocos2d), military or defense, art or artist roles (except Game Designer), non-software roles, scams, phone help desk roles, visa-targeting roles, travel over 30 percent, 2 or more years required in customer success or related roles, graduate degree required, bilingual requirement.
 
 Scoring: 95 to 100 for Tier 1, 85 to 95 for strong Tier 2, 70 to 84 for solid Tier 2 or Tier 3 at tech companies, 50 to 69 for borderline or non-tech Tier 3, 0 to 49 for not a fit.
 
