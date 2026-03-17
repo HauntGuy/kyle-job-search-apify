@@ -1086,9 +1086,12 @@ async function enrichLinkedInUrls(acceptedJobs, prevLinkedinUrlCache) {
         .filter((w) => w.length > 2 && !['the', 'and', 'for', 'with'].includes(w));
 
       // Score each URL by how many title words appear in the title portion,
-      // then pick the best match. This avoids grabbing the wrong job when a
-      // company has multiple LinkedIn postings (e.g., "Gameplay Engineer" vs
-      // "Senior Software Engineer (Fullstack)" at thatgamecompany).
+      // then pick the best match. Require a minimum match quality to avoid
+      // grabbing the wrong job (e.g., "Gameplay Engineer" matching "Senior
+      // Software Engineer (Fullstack)" just because both contain "engineer").
+      // Minimum: at least half of title words must match, and at least 2 words
+      // (or all words if the title has fewer than 2 significant words).
+      const minHits = titleWords.length <= 2 ? titleWords.length : Math.ceil(titleWords.length / 2);
       let bestUrl = null;
       let bestHits = 0;
       for (const u of urls) {
@@ -1098,18 +1101,21 @@ async function enrichLinkedInUrls(acceptedJobs, prevLinkedinUrlCache) {
         const atIdx = lower.indexOf(`-at-${slug}`);
         if (atIdx < 0) continue;
         const titlePart = lower.slice(lower.lastIndexOf('/') + 1, atIdx);
-        const hits = titleWords.length === 0 ? 1 : titleWords.filter((w) => titlePart.includes(w)).length;
-        if (hits > bestHits) { bestHits = hits; bestUrl = u; }
+        const hits = titleWords.length === 0 ? 0 : titleWords.filter((w) => titlePart.includes(w)).length;
+        if (hits >= minHits && hits > bestHits) { bestHits = hits; bestUrl = u; }
       }
       const match = bestUrl;
 
       if (match) {
         const cleanUrl = match.split(/['">\s]/)[0];
-        log.info(`LinkedIn enriched: "${job.title}" at ${job.company} → ${cleanUrl}`);
+        log.info(`LinkedIn enriched: "${job.title}" at ${job.company} → ${cleanUrl} (${bestHits}/${titleWords.length} words matched)`);
         job.applyUrl = cleanUrl;
         enrichedCount++;
         if (key) cache[key] = cleanUrl;
       } else {
+        if (urls.some(u => u.toLowerCase().includes(`-at-${slug}`))) {
+          log.info(`LinkedIn enrichment skipped: "${job.title}" at ${job.company} — company found but no title match (needed ${minHits}/${titleWords.length} words)`);
+        }
         if (key) cache[key] = null; // company found on LinkedIn but no matching job
       }
     }
