@@ -102,7 +102,7 @@
     {
       "id": "gamejobs_co_unity",
       "type": "gamejobs_co",
-      "enabled": true,
+      "enabled": false,
       "query": "unity",
       "maxPages": 25,
       "maxAgeDays": 45,
@@ -111,7 +111,7 @@
     {
       "id": "gamejobs_co_gamedev",
       "type": "gamejobs_co",
-      "enabled": true,
+      "enabled": false,
       "query": "game developer",
       "maxPages": 25,
       "maxAgeDays": 45,
@@ -120,7 +120,7 @@
     {
       "id": "gamejobs_co_designer",
       "type": "gamejobs_co",
-      "enabled": true,
+      "enabled": false,
       "query": "game designer",
       "maxPages": 25,
       "maxAgeDays": 45,
@@ -129,7 +129,7 @@
     {
       "id": "gjd_unity",
       "type": "gjd",
-      "enabled": true,
+      "enabled": false,
       "query": "unity developer",
       "maxPages": 75,
       "crawlDelayMs": 5000,
@@ -138,7 +138,7 @@
     {
       "id": "gjd_game_dev",
       "type": "gjd",
-      "enabled": true,
+      "enabled": false,
       "query": "game developer",
       "maxPages": 75,
       "crawlDelayMs": 5000,
@@ -147,7 +147,7 @@
     {
       "id": "gjd_game_designer",
       "type": "gjd",
-      "enabled": true,
+      "enabled": false,
       "query": "game designer",
       "maxPages": 75,
       "crawlDelayMs": 5000,
@@ -156,7 +156,7 @@
     {
       "id": "gjd_level_designer",
       "type": "gjd",
-      "enabled": true,
+      "enabled": false,
       "query": "level designer",
       "maxPages": 75,
       "crawlDelayMs": 5000,
@@ -165,7 +165,7 @@
     {
       "id": "gjd_gameplay_engineer",
       "type": "gjd",
-      "enabled": true,
+      "enabled": false,
       "query": "gameplay engineer",
       "maxPages": 75,
       "crawlDelayMs": 5000,
