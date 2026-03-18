@@ -2008,13 +2008,34 @@ Actor.main(async () => {
   let linkedinClosedCacheHits = 0;
 
   async function isLinkedInJobClosed(jobUrl) {
+    // Extract numeric job ID from URL for the guest API endpoint.
+    // Guest API returns ~17KB vs ~200KB for the full page — much faster.
+    // LinkedIn URLs: /jobs/view/{slug}-{id} or /jobs/view/{id}
+    const idMatch = String(jobUrl).match(/(\d{5,})(?:[/?#]|$)/);
+    const guestApiUrl = idMatch
+      ? `https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${idMatch[1]}`
+      : jobUrl; // fallback to full URL if ID extraction fails
+
     try {
-      const res = await fetch(jobUrl, {
+      const res = await fetch(guestApiUrl, {
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; job-pipeline/1.0)' },
         signal: AbortSignal.timeout(10000),
       });
       const html = await res.text();
-      return html.includes('No longer accepting applications');
+
+      // Primary check: "No longer accepting applications" (works for fully-closed jobs)
+      if (html.includes('No longer accepting applications')) return true;
+
+      // Secondary check: absence of Apply button (catches jobs closed only for
+      // logged-in users, where LinkedIn hides the CTA but doesn't show the
+      // "No longer accepting" text to anonymous fetches).
+      // Verify the page loaded a valid job first (has a title) to avoid
+      // false positives on error pages.
+      const hasJobTitle = html.includes('topcard__title');
+      const hasApplyButton = html.includes('top-card-layout__cta--primary');
+      if (hasJobTitle && !hasApplyButton) return true;
+
+      return false;
     } catch {
       return false; // on error, assume still open (don't penalize)
     }
