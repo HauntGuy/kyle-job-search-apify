@@ -3,8 +3,8 @@
   "kvStoreName": "job-pipeline-v3",
   "datasetPrefix": "jobsearch-v3",
   "run": {
-    "maxItemsPerSource": 5000,
-    "maxTotalItems": 20000,
+    "maxItemsPerSource": 2000,
+    "maxTotalItems": 10000,
     "stopOnCollectorErrors": false
   },
   "sources": [
@@ -15,10 +15,24 @@
       "actorId": "fantastic-jobs/career-site-job-listing-feed",
       "adapter": "fantastic_feed",
       "input": {
-        "limit": 5000,
-        "titleSearch": ["developer", "engineer", "programmer", "designer"],
-        "descriptionSearch": ["unity", "game", "gameplay"],
-        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
+        "limit": 2000,
+        "titleSearch": [
+          "developer",
+          "engineer",
+          "programmer",
+          "designer"
+        ],
+        "descriptionSearch": [
+          "unity",
+          "game",
+          "gameplay"
+        ],
+        "aiWorkArrangementFilter": [
+          "Remote OK",
+          "Remote Solely",
+          "Hybrid",
+          "On-site"
+        ],
         "descriptionType": "text",
         "includeAi": true,
         "includeLinkedIn": true,
@@ -35,15 +49,27 @@
       "input": {
         "limit": 1000,
         "titleSearch": [
-          "Implementation Specialist", "Onboarding Specialist",
-          "Customer Success", "Technical Account",
+          "Implementation Specialist",
+          "Onboarding Specialist",
+          "Customer Success",
+          "Technical Account",
           "Sales Engineer",
           "Client Success",
-          "Support Engineer", "Product Support Engineer", "Application Support",
-          "Solutions Consultant", "Technical Solutions"
+          "Support Engineer",
+          "Product Support Engineer",
+          "Application Support",
+          "Solutions Consultant",
+          "Technical Solutions"
         ],
-        "locationSearch": ["Massachusetts"],
-        "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
+        "locationSearch": [
+          "Massachusetts"
+        ],
+        "aiWorkArrangementFilter": [
+          "Remote OK",
+          "Remote Solely",
+          "Hybrid",
+          "On-site"
+        ],
         "descriptionType": "text",
         "includeAi": true,
         "includeLinkedIn": true,
@@ -58,11 +84,24 @@
       "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
       "adapter": "linkedin_generic",
       "input": {
-        "limit": 5000,
-        "titleSearch": ["developer", "engineer", "programmer", "designer"],
-        "descriptionSearch": ["unity", "game", "gameplay"],
+        "limit": 1000,
+        "titleSearch": [
+          "developer",
+          "engineer",
+          "programmer",
+          "designer"
+        ],
+        "descriptionSearch": [
+          "unity",
+          "game",
+          "gameplay"
+        ],
         "removeAgency": true,
-        "seniorityFilter": ["Entry level", "Associate", "Mid-Senior level"],
+        "seniorityFilter": [
+          "Entry level",
+          "Associate",
+          "Mid-Senior level"
+        ],
         "descriptionType": "text"
       }
     },
@@ -75,16 +114,27 @@
       "input": {
         "limit": 1000,
         "titleSearch": [
-          "Implementation Specialist", "Onboarding Specialist",
-          "Customer Success", "Technical Account",
+          "Implementation Specialist",
+          "Onboarding Specialist",
+          "Customer Success",
+          "Technical Account",
           "Sales Engineer",
           "Client Success",
-          "Support Engineer", "Product Support Engineer", "Application Support",
-          "Solutions Consultant", "Technical Solutions"
+          "Support Engineer",
+          "Product Support Engineer",
+          "Application Support",
+          "Solutions Consultant",
+          "Technical Solutions"
         ],
-        "locationSearch": ["Massachusetts"],
+        "locationSearch": [
+          "Massachusetts"
+        ],
         "removeAgency": true,
-        "seniorityFilter": ["Entry level", "Associate", "Mid-Senior level"],
+        "seniorityFilter": [
+          "Entry level",
+          "Associate",
+          "Mid-Senior level"
+        ],
         "descriptionType": "text"
       }
     },
@@ -98,7 +148,10 @@
       "type": "gracklehq",
       "enabled": false,
       "country": "USA",
-      "departments": ["Engineering", "Design"],
+      "departments": [
+        "Engineering",
+        "Design"
+      ],
       "maxPages": 25
     },
     {
@@ -217,7 +270,10 @@
       "id": "usajobs_gamedev",
       "type": "usajobs",
       "enabled": false,
-      "requiredEnv": ["USAJOBS_API_KEY", "USAJOBS_EMAIL"],
+      "requiredEnv": [
+        "USAJOBS_API_KEY",
+        "USAJOBS_EMAIL"
+      ],
       "keyword": "unity simulation game development",
       "whoMayApply": "public",
       "datePosted": 30
@@ -226,7 +282,10 @@
       "id": "usajobs_ma_tech",
       "type": "usajobs",
       "enabled": false,
-      "requiredEnv": ["USAJOBS_API_KEY", "USAJOBS_EMAIL"],
+      "requiredEnv": [
+        "USAJOBS_API_KEY",
+        "USAJOBS_EMAIL"
+      ],
       "keyword": "software developer",
       "locationName": "Massachusetts",
       "whoMayApply": "public",
@@ -244,7 +303,10 @@
     "concurrency": 8,
     "maxDescriptionChars": 12000,
     "rubricUrl": "http://forgaard.com/jobsearch/rubric.txt",
-    "debugJobIds": ["B:8518737", "F:1914092757"]
+    "debugJobIds": [
+      "B:8518737",
+      "F:1914092757"
+    ]
   },
   "notify": {
     "enabled": true,
