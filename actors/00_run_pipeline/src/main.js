@@ -231,21 +231,12 @@ Actor.main(async () => {
       );
       if (hitLimit.length > 0) {
         const names = hitLimit.map((s) => `${s.id} (${s.meta?.itemCount}/${s.meta?.requestedLimit || '?'})`).join(', ');
-        const msg = `ABORTING: ${hitLimit.length} source(s) hit their limit — results may be incomplete. ` +
-          `Raise the limit or split the source before re-running. Sources: ${names}`;
-        log.error(msg);
-        // Write a report so the notification actor can send an alert
-        await kv.setValue('pipeline_report.json', {
-          ...pipelineMeta,
-          finishedAt: nowIso(),
-          status: 'ABORTED_HIT_LIMIT',
-          errorMessage: msg,
-          hitLimitSources: hitLimit.map((s) => s.id),
-          stepRuns: Object.fromEntries(
-            Object.entries(stepRuns).map(([k, r]) => [k, { id: r?.id || null, status: r?.status || null }])
-          ),
-        });
-        throw new Error(msg);
+        const msg = `WARNING: ${hitLimit.length} source(s) hit their limit — results may be incomplete. ` +
+          `Consider raising the limit or splitting the source. Sources: ${names}`;
+        log.warning(msg);
+        // Store warning for email notification but continue the run
+        pipelineMeta.capWarning = msg;
+        pipelineMeta.hitLimitSources = hitLimit.map((s) => s.id);
       }
     }
 

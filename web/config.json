@@ -3,20 +3,20 @@
   "kvStoreName": "job-pipeline-v3",
   "datasetPrefix": "jobsearch-v3",
   "run": {
-    "maxItemsPerSource": 10000,
+    "maxItemsPerSource": 5000,
     "maxTotalItems": 30000,
     "stopOnCollectorErrors": false
   },
   "sources": [
     {
-      "id": "fantastic",
+      "id": "fantastic_unity_gameplay",
       "type": "apify_actor",
       "enabled": true,
       "actorId": "fantastic-jobs/career-site-job-listing-feed",
       "adapter": "fantastic_feed",
       "memoryMbytes": 2048,
       "input": {
-        "limit": 10000,
+        "limit": 5000,
         "titleSearch": [
           "developer",
           "engineer",
@@ -25,8 +25,42 @@
         ],
         "descriptionSearch": [
           "unity",
-          "game",
           "gameplay"
+        ],
+        "aiWorkArrangementFilter": [
+          "Remote OK",
+          "Remote Solely",
+          "Hybrid",
+          "On-site"
+        ],
+        "descriptionType": "text",
+        "includeAi": true,
+        "includeLinkedIn": true,
+        "includeJobAggregator": true,
+        "makeRecordsUnique": true
+      }
+    },
+    {
+      "id": "fantastic_game_dev",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/career-site-job-listing-feed",
+      "adapter": "fantastic_feed",
+      "memoryMbytes": 2048,
+      "input": {
+        "limit": 5000,
+        "titleSearch": [
+          "developer",
+          "engineer",
+          "programmer",
+          "designer"
+        ],
+        "descriptionSearch": [
+          "game developer",
+          "game engineer",
+          "game programmer",
+          "game designer",
+          "game development"
         ],
         "aiWorkArrangementFilter": [
           "Remote OK",
@@ -86,7 +120,7 @@
       "adapter": "linkedin_generic",
       "memoryMbytes": 2048,
       "input": {
-        "limit": 10000,
+        "limit": 5000,
         "titleSearch": [
           "developer",
           "engineer",
@@ -96,7 +130,8 @@
         "descriptionSearch": [
           "unity",
           "game",
-          "gameplay"
+          "gameplay",
+          "game development"
         ],
         "removeAgency": true,
         "seniorityFilter": [
