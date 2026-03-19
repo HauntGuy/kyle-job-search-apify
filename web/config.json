@@ -9,7 +9,7 @@
   },
   "sources": [
     {
-      "id": "fantastic_unity_gameplay",
+      "id": "fantastic",
       "type": "apify_actor",
       "enabled": true,
       "actorId": "fantastic-jobs/career-site-job-listing-feed",
@@ -25,7 +25,8 @@
         ],
         "descriptionSearch": [
           "unity",
-          "gameplay"
+          "gameplay",
+          "level"
         ],
         "aiWorkArrangementFilter": [
           "Remote OK",
@@ -123,6 +124,7 @@
         "limit": 5000,
         "titleSearch": [
           "developer",
+          "development",
           "engineer",
           "programmer",
           "designer"
@@ -131,7 +133,7 @@
           "unity",
           "game",
           "gameplay",
-          "game development"
+          "level"
         ],
         "removeAgency": true,
         "seniorityFilter": [
@@ -300,6 +302,46 @@
       "type": "builtin",
       "enabled": true,
       "query": "gameplay engineer",
+      "allLocations": true,
+      "maxPages": 100
+    },
+    {
+      "id": "builtin_unity_engineer",
+      "type": "builtin",
+      "enabled": true,
+      "query": "unity engineer",
+      "allLocations": true,
+      "maxPages": 100
+    },
+    {
+      "id": "builtin_unity_programmer",
+      "type": "builtin",
+      "enabled": true,
+      "query": "unity programmer",
+      "allLocations": true,
+      "maxPages": 100
+    },
+    {
+      "id": "builtin_gameplay_developer",
+      "type": "builtin",
+      "enabled": true,
+      "query": "gameplay developer",
+      "allLocations": true,
+      "maxPages": 100
+    },
+    {
+      "id": "builtin_gameplay_designer",
+      "type": "builtin",
+      "enabled": true,
+      "query": "gameplay designer",
+      "allLocations": true,
+      "maxPages": 100
+    },
+    {
+      "id": "builtin_game_programmer",
+      "type": "builtin",
+      "enabled": true,
+      "query": "game programmer",
       "allLocations": true,
       "maxPages": 100
     },
