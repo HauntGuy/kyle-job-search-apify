@@ -1064,7 +1064,7 @@ async function runApifyActorSource(source, globalMaxItemsPerSource, remaining) {
   }
 
   // Cap to a reasonable max to avoid giant accidental pulls.
-  requestedLimit = Math.min(5000, requestedLimit);
+  requestedLimit = Math.min(10000, requestedLimit);
 
   // Ensure we actually pass the upstream actor a limit.
   input.limit = requestedLimit;
