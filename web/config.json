@@ -3,8 +3,8 @@
   "kvStoreName": "job-pipeline-v3",
   "datasetPrefix": "jobsearch-v3",
   "run": {
-    "maxItemsPerSource": 2000,
-    "maxTotalItems": 10000,
+    "maxItemsPerSource": 5000,
+    "maxTotalItems": 20000,
     "stopOnCollectorErrors": false
   },
   "sources": [
@@ -16,7 +16,7 @@
       "adapter": "fantastic_feed",
       "memoryMbytes": 1024,
       "input": {
-        "limit": 2000,
+        "limit": 5000,
         "titleSearch": [
           "developer",
           "engineer",
@@ -85,7 +85,7 @@
       "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
       "adapter": "linkedin_generic",
       "input": {
-        "limit": 1000,
+        "limit": 5000,
         "titleSearch": [
           "developer",
           "engineer",

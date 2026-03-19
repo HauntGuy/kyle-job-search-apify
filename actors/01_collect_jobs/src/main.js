@@ -1077,8 +1077,8 @@ async function runApifyActorSource(source, globalMaxItemsPerSource, remaining) {
 
   let run;
   if (memoryMbytes) {
-    const startedRun = await Actor.start(actorId, input, { memory: Number(memoryMbytes) });
-    run = await Actor.waitForFinish(startedRun.id);
+    const startedRun = await Actor.apifyClient.actor(actorId).start(input, { memory: Number(memoryMbytes) });
+    run = await Actor.apifyClient.run(startedRun.id).waitForFinish();
   } else {
     run = await Actor.call(actorId, input);
   }
