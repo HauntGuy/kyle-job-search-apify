@@ -3,8 +3,8 @@
   "kvStoreName": "job-pipeline-v3",
   "datasetPrefix": "jobsearch-v3",
   "run": {
-    "maxItemsPerSource": 1200,
-    "maxTotalItems": 10000,
+    "maxItemsPerSource": 5000,
+    "maxTotalItems": 20000,
     "stopOnCollectorErrors": false
   },
   "sources": [
@@ -15,9 +15,9 @@
       "actorId": "fantastic-jobs/career-site-job-listing-feed",
       "adapter": "fantastic_feed",
       "input": {
-        "limit": 1000,
-        "titleSearch": ["Unity", "Game Developer", "Game Programmer", "Game Designer"],
-        "locationSearch": ["United States"],
+        "limit": 5000,
+        "titleSearch": ["developer", "engineer", "programmer", "designer"],
+        "descriptionSearch": ["unity", "game", "gameplay"],
         "aiWorkArrangementFilter": ["Remote OK", "Remote Solely", "Hybrid", "On-site"],
         "descriptionType": "text",
         "includeAi": true,
@@ -58,10 +58,11 @@
       "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
       "adapter": "linkedin_generic",
       "input": {
-        "timeRange": "6m",
-        "limit": 1000,
-        "titleSearch": ["Unity", "Game Developer", "Game Programmer", "Game Designer"],
-        "locationSearch": ["United States"],
+        "limit": 5000,
+        "titleSearch": ["developer", "engineer", "programmer", "designer"],
+        "descriptionSearch": ["unity", "game", "gameplay"],
+        "removeAgency": true,
+        "seniorityFilter": ["Entry level", "Associate", "Mid-Senior level"],
         "descriptionType": "text"
       }
     },
@@ -72,7 +73,6 @@
       "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
       "adapter": "linkedin_generic",
       "input": {
-        "timeRange": "6m",
         "limit": 1000,
         "titleSearch": [
           "Implementation Specialist", "Onboarding Specialist",
@@ -83,6 +83,8 @@
           "Solutions Consultant", "Technical Solutions"
         ],
         "locationSearch": ["Massachusetts"],
+        "removeAgency": true,
+        "seniorityFilter": ["Entry level", "Associate", "Mid-Senior level"],
         "descriptionType": "text"
       }
     },
@@ -214,7 +216,7 @@
     {
       "id": "usajobs_gamedev",
       "type": "usajobs",
-      "enabled": true,
+      "enabled": false,
       "requiredEnv": ["USAJOBS_API_KEY", "USAJOBS_EMAIL"],
       "keyword": "unity simulation game development",
       "whoMayApply": "public",
@@ -223,7 +225,7 @@
     {
       "id": "usajobs_ma_tech",
       "type": "usajobs",
-      "enabled": true,
+      "enabled": false,
       "requiredEnv": ["USAJOBS_API_KEY", "USAJOBS_EMAIL"],
       "keyword": "software developer",
       "locationName": "Massachusetts",

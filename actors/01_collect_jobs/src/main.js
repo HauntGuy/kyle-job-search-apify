@@ -1001,7 +1001,7 @@ function coerceApifyActorInput(input) {
   const out = { ...(input || {}) };
 
   // Coerce to arrays if strings are provided
-  for (const k of ['titleSearch', 'locationSearch', 'aiWorkArrangementFilter']) {
+  for (const k of ['titleSearch', 'locationSearch', 'aiWorkArrangementFilter', 'descriptionSearch', 'seniorityFilter']) {
     if (!(k in out)) continue;
 
     const v = out[k];
