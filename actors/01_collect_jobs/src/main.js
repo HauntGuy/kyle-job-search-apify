@@ -1069,9 +1069,14 @@ async function runApifyActorSource(source, globalMaxItemsPerSource, remaining) {
   // Ensure we actually pass the upstream actor a limit.
   input.limit = requestedLimit;
 
-  log.info(`[${source.id}] Calling Apify actor ${actorId} (limit=${requestedLimit})`);
+  // Allow per-source memory override for actors that handle large result sets
+  const memoryMbytes = source.input?.memoryMbytes || source.memoryMbytes || undefined;
+  const callOptions = {};
+  if (memoryMbytes) callOptions.memoryMbytes = Number(memoryMbytes);
 
-  const run = await Actor.call(actorId, input);
+  log.info(`[${source.id}] Calling Apify actor ${actorId} (limit=${requestedLimit}${memoryMbytes ? `, memory=${memoryMbytes}MB` : ''})`);
+
+  const run = await Actor.call(actorId, input, callOptions);
   const status = run?.status || 'UNKNOWN';
   if (status !== 'SUCCEEDED') {
     throw new Error(`[${source.id}] Called actor did not succeed (status=${status}, runId=${run?.id || 'unknown'})`);
