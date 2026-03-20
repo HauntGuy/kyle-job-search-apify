@@ -2233,6 +2233,18 @@ Actor.main(async () => {
     log.info(`Salary standardization: ${salaryNotes.length} note(s) generated.`);
   }
 
+  // Save score_cache.json BEFORE building XLSX — if XLSX generation OOMs,
+  // we don't lose the LLM scoring results and LinkedIn caches.
+  await kv.setValue('score_cache.json', {
+    scoringFormatVersion: SCORING_FORMAT_VERSION,
+    rubricVersion: currentRubricVersion,
+    scoredDatasetName,
+    linkedinUrlCache: linkedinUrlCache || {},
+    linkedinClosedUrls: [...linkedinClosedCache],
+    cachedAt: nowIso(),
+  });
+  log.info('Score cache saved (pre-XLSX).');
+
   // Build accepted.xlsx + scored.xlsx (Excel format with hyperlinks, frozen panes, bold headers)
   const xlsxContentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
@@ -2356,15 +2368,7 @@ Actor.main(async () => {
     log.info(`Wrote debug_llm.json with ${debugLlmResults.length} captured LLM interactions.`);
   }
 
-  // Write score_cache.json for next run's LLM cache + LinkedIn cache
-  await kv.setValue('score_cache.json', {
-    scoringFormatVersion: SCORING_FORMAT_VERSION,
-    rubricVersion: currentRubricVersion,
-    scoredDatasetName,
-    linkedinUrlCache: linkedinUrlCache || {},
-    linkedinClosedUrls: [...linkedinClosedCache],
-    cachedAt: nowIso(),
-  });
+  // score_cache.json already saved above (pre-XLSX) to survive OOM during XLSX generation.
 
   const costStr = estimatedCostUsd != null ? ` LLM cost: $${estimatedCostUsd.toFixed(4)}.` : '';
   const cacheStr = cacheHits > 0 ? ` Cache hits: ${cacheHits}.` : '';
