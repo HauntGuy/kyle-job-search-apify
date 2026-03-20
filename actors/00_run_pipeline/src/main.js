@@ -115,9 +115,10 @@ async function safeCallActor(actorId, input, label, opts = {}) {
   const client = Actor.apifyClient;
   const started = Date.now();
 
-  // Build start options (e.g. timeout override for long-running actors)
+  // Build start options (e.g. timeout/memory override for long-running actors)
   const startOpts = {};
   if (opts.timeoutSecs) startOpts.timeout = opts.timeoutSecs;
+  if (opts.memoryMbytes) startOpts.memory = opts.memoryMbytes;
 
   // 1) Start the actor (returns immediately — no long-lived connection)
   let runId;
@@ -242,12 +243,14 @@ Actor.main(async () => {
 
     // 2) Merge + dedup
     const mergeActor = resolveActorId({ config, actorUser, step: 'merge' });
-    stepRuns.merge = await safeCallActor(mergeActor, { config, kvStoreName, datasetPrefix, runId }, 'merge');
+    stepRuns.merge = await safeCallActor(mergeActor, { config, kvStoreName, datasetPrefix, runId }, 'merge',
+      { memoryMbytes: config?.actorMemory?.merge || 2048 });
 
     // 3) Score
     if (config?.scoring?.enabled !== false) {
       const scoreActor = resolveActorId({ config, actorUser, step: 'score' });
-      stepRuns.score = await safeCallActor(scoreActor, { config, kvStoreName, datasetPrefix, runId }, 'score');
+      stepRuns.score = await safeCallActor(scoreActor, { config, kvStoreName, datasetPrefix, runId }, 'score',
+        { memoryMbytes: config?.actorMemory?.score || 1024, timeoutSecs: config?.actorMemory?.scoreTimeoutSecs || 14400 });
     } else {
       log.warning('Scoring disabled by config.scoring.enabled=false');
     }
