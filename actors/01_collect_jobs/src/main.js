@@ -2579,9 +2579,15 @@ Actor.main(async () => {
 
   // Build collected.xlsx for debugging (all raw jobs before merge/dedup)
   const collectedXlsx = await buildCollectedXlsx(allJobs);
-  await kv.setValue('collected.xlsx', collectedXlsx, {
-    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  });
+  const xlsxContentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  await kv.setValue('collected.xlsx', collectedXlsx, { contentType: xlsxContentType });
+
+  // Save historical copy with run number
+  const runMeta = await kv.getValue('run_meta.json');
+  const runNum = runMeta?.runNumber;
+  if (runNum) {
+    await kv.setValue(`collected_R${runNum}.xlsx`, collectedXlsx, { contentType: xlsxContentType });
+  }
 
   log.info(`Collection complete. Pushed ${pushed} jobs to dataset ${rawDatasetName}. collected.xlsx written to KV store.`);
 });

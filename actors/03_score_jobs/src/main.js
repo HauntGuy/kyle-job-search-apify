@@ -2252,6 +2252,7 @@ Actor.main(async () => {
   const acceptedSorted = [...acceptedJobs].sort((a, b) => (b.evaluation?.score ?? 0) - (a.evaluation?.score ?? 0));
   const acceptedXlsx = await buildScoredXlsx(acceptedSorted, { isAcceptedSheet: true, runNumber });
   await kv.setValue('accepted.xlsx', acceptedXlsx, { contentType: xlsxContentType });
+  if (runNumber) await kv.setValue(`accepted_R${runNumber}.xlsx`, acceptedXlsx, { contentType: xlsxContentType });
 
   // scored.xlsx contains ALL scored jobs (accepted + rejected) for review
   // Sort by score descending so best matches appear first
@@ -2262,6 +2263,7 @@ Actor.main(async () => {
     rubricVersion: currentRubricVersion,
   });
   await kv.setValue('scored.xlsx', scoredXlsx, { contentType: xlsxContentType });
+  if (runNumber) await kv.setValue(`scored_R${runNumber}.xlsx`, scoredXlsx, { contentType: xlsxContentType });
 
   // Compute estimated LLM cost from token counts
   const MODEL_PRICING = {
