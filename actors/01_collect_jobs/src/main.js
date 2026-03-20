@@ -2372,7 +2372,7 @@ async function buildCollectedXlsx(jobs) {
     { header: 'Salary',        width: 22 },
     { header: 'Posted At',     width: 22 },
     { header: 'URL',           width: 50 },
-    { header: 'Search Terms',  width: 40 },
+    { header: 'Sources',       width: 30 },
     { header: 'Job IDs',       width: 30 },
   ];
 
@@ -2395,7 +2395,7 @@ async function buildCollectedXlsx(jobs) {
       j.salary || '',
       j.postedAt || '',
       j.url || j.applyUrl || '',
-      (j.searchTerms || []).join('; '),
+      j.source || '',
       jobIdStr,
     ]);
 

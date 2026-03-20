@@ -1123,7 +1123,6 @@ async function enrichLinkedInUrls(acceptedJobs, prevLinkedinUrlCache) {
 
 // Build an XLSX workbook buffer from an array of scored jobs
 async function buildScoredXlsx(jobs, {
-  includeSearchTerms = false,
   includeJobIds = false,
   scoringFormatVersion = null,
   rubricVersion = null,
@@ -1140,30 +1139,26 @@ async function buildScoredXlsx(jobs, {
     { header: 'Salary',        width: 26, key: 'salary' },
   ];
   if (isAcceptedSheet) {
-    colDefs.push({ header: 'Job Type', width: 40, key: 'jobType' }); // workMode | positionType | location
+    colDefs.push({ header: 'Where', width: 40, key: 'jobType' }); // workMode | positionType | location
+    colDefs.push({ header: 'Where Found', width: 19, key: 'whereFound' });
+    colDefs.push({ header: 'Age (days)',  width: 11, key: 'age' });
+    colDefs.push({ header: 'Sources', width: 30, key: 'sources' });
   } else {
     colDefs.push({ header: 'Location',   width: 30, key: 'location' });
     colDefs.push({ header: 'Work Mode',  width: 12, key: 'workMode' });
     colDefs.push({ header: 'Commutable', width: 12, key: 'commutable' });
     colDefs.push({ header: 'Position Type', width: 14, key: 'positionType' });
-  }
-  if (!isAcceptedSheet) {
     colDefs.push({ header: 'Score', width: 8, key: 'score' });
     colDefs.push({ header: 'Role',  width: 22, key: 'role' });
-  }
-  colDefs.push({ header: 'Age (days)',  width: 11, key: 'age' });
-  colDefs.push({ header: 'Where Found', width: 19, key: 'whereFound' });
-  if (!isAcceptedSheet) {
-    colDefs.push({ header: 'Sources', width: 19, key: 'sources' });
+    colDefs.push({ header: 'Age (days)',  width: 11, key: 'age' });
+    colDefs.push({ header: 'Where Found', width: 19, key: 'whereFound' });
+    colDefs.push({ header: 'Sources', width: 30, key: 'sources' });
   }
   colDefs.push({ header: 'Reason',    width: 52, key: 'reason' });
   if (!isAcceptedSheet) {
     colDefs.push({ header: 'Tags', width: 36, key: 'tags' });
   }
   colDefs.push({ header: 'Red Flags', width: 42, key: 'redFlags' });
-  if (includeSearchTerms) {
-    colDefs.push({ header: 'Search Terms', width: 40, key: 'searchTerms' });
-  }
   if (includeJobIds) {
     colDefs.push({ header: 'Job IDs', width: 30, key: 'jobIds' });
   }
@@ -1216,7 +1211,7 @@ async function buildScoredXlsx(jobs, {
     const score = ev.score ?? 0;
     const ageDays = calculateAgeDays(j.earliestPostedAt || j.postedAt);
     const sourcesArr = Array.isArray(j.sources) ? j.sources : [j.source].filter(Boolean);
-    const sourcesStr = sourcesArr.map(friendlySourceName).filter(Boolean).join(', ');
+    const sourcesStr = sourcesArr.filter(Boolean).join(', ');
     const reason = ev.reason_short || '';
     const positionType = j.positionType || 'Full-Time';
 
@@ -1237,7 +1232,6 @@ async function buildScoredXlsx(jobs, {
       reason,
       tags,
       redFlags,
-      searchTerms:  (j.searchTerms || []).join('; '),
       jobIds:       (j.sourceJobIds || []).join(', '),
     };
 
@@ -2251,7 +2245,6 @@ Actor.main(async () => {
   // Sort by score descending so best matches appear first
   const allSorted = [...results].sort((a, b) => (b.evaluation?.score ?? 0) - (a.evaluation?.score ?? 0));
   const scoredXlsx = await buildScoredXlsx(allSorted, {
-    includeSearchTerms: true,
     includeJobIds: true,
     scoringFormatVersion: SCORING_FORMAT_VERSION,
     rubricVersion: currentRubricVersion,
