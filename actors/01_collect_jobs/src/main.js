@@ -915,26 +915,27 @@ function normalizeFantasticFeed(sourceId, raw) {
   // Extract country hint from raw metadata (source_domain, location_requirements_raw, addressCountry)
   const countryHint = _extractCountryHint(raw);
 
-  // Check multiple sources for remote/hybrid status.
-  // ai_work_arrangement is Fantastic's AI analysis of the actual description — most reliable.
-  // location_type='TELECOMMUTE' comes from schema.org markup in the ATS, but some employers
-  // set TELECOMMUTE to mean "we accept remote applications" even for on-site/hybrid roles.
-  // When ai_work_arrangement explicitly says on-site or hybrid, it overrides location_type.
-  const aiWA = String(raw.ai_work_arrangement || '').toLowerCase();
-  const waD = String(raw.work_arrangement_derived || '').toLowerCase();
-  const locType = String(raw.location_type || '').toLowerCase();
-  const aiExplicitNonRemote = aiWA.includes('on-site') || aiWA.includes('on site') || aiWA.includes('hybrid');
-  const telecommuteSignal = locType === 'telecommute' && !aiExplicitNonRemote;
-  // "Remote OK" / "Remote Flexible" means hybrid/flexible, not fully remote.
-  // Only "Remote" or "Remote Solely" mean the job is actually remote.
-  const aiWAIsRemote = aiWA.includes('remote') && !aiWA.includes('remote ok') && !aiWA.includes('remote flexible');
-  const aiWAIsHybrid = aiWA.includes('hybrid') || aiWA.includes('remote ok') || aiWA.includes('remote flexible');
-  const remote = !!raw.remote_derived || waD.includes('remote') || aiWAIsRemote || telecommuteSignal;
-  const hybrid = !!raw.hybrid_derived || waD.includes('hybrid') || aiWAIsHybrid;
+  // Work arrangement: trust Fantastic's ai_work_arrangement field exclusively.
+  // It is the most reliable signal — Fantastic's AI reads the actual job description.
+  // We previously used remote_derived, location_type (TELECOMMUTE), and
+  // work_arrangement_derived, but these often conflicted with ai_work_arrangement
+  // (e.g., remote_derived=true + ai_work_arrangement="Hybrid" → incorrectly marked Remote).
+  // If ai_work_arrangement is null, leave workMode empty and let our LLM determine it.
+  const aiWA = String(raw.ai_work_arrangement || '').toLowerCase().trim();
+  let remote = false;
+  let hybrid = false;
+  if (aiWA === 'remote' || aiWA === 'remote solely') {
+    remote = true;
+  } else if (aiWA === 'hybrid' || aiWA === 'remote ok' || aiWA === 'remote flexible') {
+    hybrid = true;
+  }
+  // On-site and null/unknown: remote=false, hybrid=false → workMode will be "" or "On-Site"
+  const onSite = aiWA.includes('on-site') || aiWA.includes('on site');
 
   const locParts = [];
   if (remote) locParts.push('Remote');
   if (hybrid) locParts.push('Hybrid');
+  if (onSite) locParts.push('On-Site');
   if (locationsDerived.length) locParts.push(locationsDerived.join('; '));
   else if (locationsRaw.length) locParts.push(locationsRaw.join('; '));
   else if (raw.location) locParts.push(String(raw.location));
