@@ -220,7 +220,8 @@ Actor.main(async () => {
   try {
     // 1) Collect
     const collectActor = resolveActorId({ config, actorUser, step: 'collect' });
-    stepRuns.collect = await safeCallActor(collectActor, { config, kvStoreName, datasetPrefix, runId }, 'collect', { timeoutSecs: 14400 });
+    stepRuns.collect = await safeCallActor(collectActor, { config, kvStoreName, datasetPrefix, runId }, 'collect',
+      { memoryMbytes: config?.actorMemory?.collect || 2048, timeoutSecs: 14400 });
 
     // Safety check: if any source hit its limit, abort before spending money
     // on scoring.  This means we may be missing results and should investigate
