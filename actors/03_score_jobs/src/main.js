@@ -1446,6 +1446,21 @@ Actor.main(async () => {
   }
   log.info(`Expired pre-filter: ${preExpiredSet.size} jobs have date_validthrough in the past and will be skipped.`);
 
+  // --- Snapshot key fields before enrichment (for enrichmentLog tracking) ---
+  const preEnrichSnapshot = new Map();
+  for (let i = 0; i < mergedJobs.length; i++) {
+    const j = mergedJobs[i];
+    preEnrichSnapshot.set(i, {
+      workMode: j.workMode || '',
+      salary: j.salary || '',
+      employmentType: j.employmentType || '',
+      location: j.location || '',
+      description: (j.description || '').length,
+      url: j.url || '',
+      applyUrl: j.applyUrl || '',
+    });
+  }
+
   // --- Built In description enrichment (fetch missing descriptions for pre-filter survivors) ---
   const builtInEnrichment = { total: 0, cached: 0, fetched: 0, failed: 0, failedUrls: [] };
 
@@ -1620,6 +1635,25 @@ Actor.main(async () => {
 
   await linkedinCache.save();
 
+  // --- Compute enrichmentLog for each job (diff pre vs post enrichment) ---
+  for (let i = 0; i < mergedJobs.length; i++) {
+    const pre = preEnrichSnapshot.get(i);
+    if (!pre) continue;
+    const j = mergedJobs[i];
+    const changes = [];
+    if ((j.workMode || '') !== pre.workMode) changes.push(`workMode: "${pre.workMode}" -> "${j.workMode || ''}"`);
+    if ((j.salary || '') !== pre.salary) changes.push(`salary: "${pre.salary}" -> "${j.salary || ''}"`);
+    if ((j.employmentType || '') !== pre.employmentType) changes.push(`employmentType: "${pre.employmentType}" -> "${j.employmentType || ''}"`);
+    if ((j.location || '') !== pre.location) changes.push(`location: "${pre.location}" -> "${j.location || ''}"`);
+    const newDescLen = (j.description || '').length;
+    if (newDescLen !== pre.description) changes.push(`description: ${pre.description} chars -> ${newDescLen} chars`);
+    if ((j.url || '') !== pre.url) changes.push(`url: "${pre.url}" -> "${j.url || ''}"`);
+    if ((j.applyUrl || '') !== pre.applyUrl) changes.push(`applyUrl: "${pre.applyUrl}" -> "${j.applyUrl || ''}"`);
+    if (changes.length > 0) {
+      j.enrichmentLog = changes;
+    }
+  }
+
   // --- Scoring helper (reused for initial pass and re-score passes) ---
   async function scoreOneJob(job, idx) {
     // --- Pre-filter gates run BEFORE cache check ---
@@ -1633,6 +1667,7 @@ Actor.main(async () => {
       titleSkipped += 1;
       return {
         ...job,
+        filterReason: `title_skip: ${titleDqReason}`,
         evaluation: {
           accept: false,
           accepted: false,
@@ -1657,6 +1692,7 @@ Actor.main(async () => {
       titleSkipped += 1; // reuse titleSkipped counter for simplicity
       return {
         ...job,
+        filterReason: `position_type_skip: ${pt}`,
         evaluation: {
           accept: false,
           accepted: false,
@@ -1684,6 +1720,7 @@ Actor.main(async () => {
       locationSkipped += 1;
       return {
         ...job,
+        filterReason: `location_skip: ${job.workMode || 'unknown'} | ${job.location || 'unknown'} | commutable=${job.commutable}`,
         evaluation: {
           accept: false,
           accepted: false,
@@ -1707,6 +1744,7 @@ Actor.main(async () => {
       expiredSkipped += 1;
       return {
         ...job,
+        filterReason: 'expired: date_validthrough in the past',
         evaluation: {
           accept: false,
           accepted: false,
@@ -1737,6 +1775,7 @@ Actor.main(async () => {
         : 'Job is on the blocklist.';
       return {
         ...job,
+        filterReason: `blocklisted: ${isCompanyBlocked ? 'company=' + job.company : jobIdList.join(',')}`,
         evaluation: {
           accept: false,
           accepted: false,
@@ -1762,6 +1801,7 @@ Actor.main(async () => {
       cacheHits++;
       return {
         ...job,
+        filterReason: `cache_hit: score=${cached.evaluation.score}, accept=${cached.evaluation.accept}`,
         evaluation: { ...cached.evaluation },
         scoredAt: cached.scoredAt || nowIso(),
         cachedFrom: 'previous_run',
@@ -1898,6 +1938,7 @@ Actor.main(async () => {
         locationSkipped += 1;
         return {
           ...job,
+          filterReason: `location_skip_post_llm: ${job.workMode || 'unknown'} | ${job.location || 'unknown'} | is_us=${evaluation.is_us} | country=${evaluation.location_country}`,
           evaluation: {
             ...evaluation,
             accept: false,
@@ -1927,8 +1968,13 @@ Actor.main(async () => {
       score >= threshold &&
       (!gateOnLocation || locationOk === 'yes');
 
+    const filterDesc = accepted
+      ? `accepted: score=${score}`
+      : `llm_rejected: score=${score}, accept=${accept}${score < threshold ? ', below_threshold' : ''}`;
+
     return {
       ...job,
+      filterReason: filterDesc,
       evaluation: {
         ...evaluation,
         score,
@@ -1968,6 +2014,7 @@ Actor.main(async () => {
     log.error(`Scoring failed for idx=${index} title="${job.title}": ${error?.message || error}`);
     results[index] = {
       ...job,
+      filterReason: `scoring_error: ${error?.message || error}`,
       evaluation: {
         accept: false,
         accepted: false,

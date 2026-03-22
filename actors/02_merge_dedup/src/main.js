@@ -222,21 +222,22 @@ Actor.main(async () => {
 
   const kv = await Actor.openKeyValueStore(kvStoreName);
 
-  const rawInfo = await kv.getValue('raw_dataset.json');
-  if (!rawInfo?.name) throw new Error('Missing raw_dataset.json in KV store (run 01_collect_jobs first).');
+  // Support both new (collected_dataset_info.json) and legacy (raw_dataset.json) names
+  const collectedInfo = (await kv.getValue('collected_dataset_info.json')) || (await kv.getValue('raw_dataset.json'));
+  if (!collectedInfo?.name) throw new Error('Missing collected_dataset_info.json in KV store (run 01_collect_jobs first).');
 
-  const rawDataset = await Actor.openDataset(rawInfo.name);
+  const collectedDataset = await Actor.openDataset(collectedInfo.name);
 
   const mergedDatasetName = datasetName(datasetPrefix, 'merged', runId);
   const mergedDataset = await Actor.openDataset(mergedDatasetName);
 
   const preferLinkedInApply = config?.merge?.preferLinkedInApply !== false;
 
-  log.info(`Merging raw dataset "${rawInfo.name}" -> "${mergedDatasetName}" (preferLinkedInApply=${preferLinkedInApply})`);
+  log.info(`Merging raw dataset "${collectedInfo.name}" -> "${mergedDatasetName}" (preferLinkedInApply=${preferLinkedInApply})`);
 
   const startedAt = nowIso();
 
-  const maxItems = Number(config?.run?.maxTotalItems || rawInfo.itemCount || 5000) || 5000;
+  const maxItems = Number(config?.run?.maxTotalItems || collectedInfo.itemCount || 5000) || 5000;
   const pageSize = 250;
 
   const groups = new Map();       // groupId -> merged job
@@ -246,7 +247,7 @@ Actor.main(async () => {
   let duplicates = 0;
 
   for (let offset = 0; offset < maxItems; offset += pageSize) {
-    const { items } = await rawDataset.getData({ offset, limit: pageSize });
+    const { items } = await collectedDataset.getData({ offset, limit: pageSize });
     if (!items || items.length === 0) break;
 
     for (const job of items) {
@@ -314,7 +315,7 @@ Actor.main(async () => {
     finishedAt,
     kvStoreName,
     datasetPrefix,
-    rawDatasetName: rawInfo.name,
+    collectedDatasetName: collectedInfo.name,
     mergedDatasetName,
     scanned,
     merged: mergedJobs.length,

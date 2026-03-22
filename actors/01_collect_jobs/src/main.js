@@ -2418,8 +2418,8 @@ Actor.main(async () => {
 
   const kv = await Actor.openKeyValueStore(kvStoreName);
 
-  const rawDatasetName = datasetName(datasetPrefix, 'raw', runId);
-  const rawDataset = await Actor.openDataset(rawDatasetName);
+  const collectedDatasetName = datasetName(datasetPrefix, 'collected', runId);
+  const collectedDataset = await Actor.openDataset(collectedDatasetName);
 
   const startedAt = nowIso();
   const report = {
@@ -2427,7 +2427,7 @@ Actor.main(async () => {
     startedAt,
     kvStoreName,
     datasetPrefix,
-    rawDatasetName,
+    collectedDatasetName,
     sources: [],
     totals: { collected: 0, pushed: 0, skipped: 0, errors: 0 },
   };
@@ -2553,7 +2553,7 @@ Actor.main(async () => {
   let pushed = 0;
   for (let i = 0; i < allJobs.length; i += batchSize) {
     const batch = allJobs.slice(i, i + batchSize);
-    await rawDataset.pushData(batch);
+    await collectedDataset.pushData(batch);
     pushed += batch.length;
   }
 
@@ -2574,7 +2574,9 @@ Actor.main(async () => {
     report.unknownWorkModes = vals;
   }
 
-  const datasetInfo = { id: rawDataset.getId?.() || null, name: rawDatasetName, itemCount: pushed };
+  const datasetInfo = { id: collectedDataset.getId?.() || null, name: collectedDatasetName, itemCount: pushed };
+  await kv.setValue('collected_dataset_info.json', datasetInfo);
+  // Backward compat: merge actor also reads raw_dataset.json
   await kv.setValue('raw_dataset.json', datasetInfo);
   await kv.setValue('collect_report.json', report);
 
@@ -2590,5 +2592,5 @@ Actor.main(async () => {
     await kv.setValue(`collected_R${runNum}.xlsx`, collectedXlsx, { contentType: xlsxContentType });
   }
 
-  log.info(`Collection complete. Pushed ${pushed} jobs to dataset ${rawDatasetName}. collected.xlsx written to KV store.`);
+  log.info(`Collection complete. Pushed ${pushed} jobs to dataset ${collectedDatasetName}. collected.xlsx written to KV store.`);
 });
