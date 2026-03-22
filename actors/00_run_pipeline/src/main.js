@@ -256,6 +256,18 @@ Actor.main(async () => {
       log.warning('Scoring disabled by config.scoring.enabled=false');
     }
 
+    // Write pipeline_report.json BEFORE notify so the email actor reads
+    // the current run's status, not a stale one from a previous run.
+    const preNotifyReport = {
+      ...pipelineMeta,
+      finishedAt: nowIso(),
+      status: 'SUCCEEDED',
+      stepRuns: Object.fromEntries(
+        Object.entries(stepRuns).map(([k, r]) => [k, { id: r?.id || null, status: r?.status || null }])
+      ),
+    };
+    await kv.setValue('pipeline_report.json', preNotifyReport);
+
     // 4) Notify
     if (config?.notify?.enabled !== false) {
       const notifyActor = resolveActorId({ config, actorUser, step: 'notify' });
