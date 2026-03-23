@@ -2330,8 +2330,8 @@ function collectedFriendlySource(sourceId) {
 
 function jobIdPrefix(sourceId) {
   const s = String(sourceId || '');
-  if (s.startsWith('fantastic_')) return 'F';
-  if (s.startsWith('linkedin_')) return 'L';
+  if (s === 'fantastic' || s.startsWith('fantastic_')) return 'F';
+  if (s === 'linkedin' || s.startsWith('linkedin_')) return 'L';
   if (s.startsWith('builtin_')) return 'B';
   if (s.startsWith('usajobs_')) return 'U';
   if (s === 'gracklehq') return 'G';

@@ -441,7 +441,7 @@
     "concurrency": 8,
     "maxDescriptionChars": 12000,
     "rubricUrl": "http://forgaard.com/jobsearch/rubric.txt",
-    "debugJobIds": ["?:2045408868", "F:2025789301", "F:1972001947", "F:2045594737", "L:2064792480"]
+    "debugJobIds": ["F:2045408868", "F:2025789301", "F:1972001947", "F:2045594737", "L:2064792480"]
   },
   "notify": {
     "enabled": true,
