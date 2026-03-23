@@ -2477,8 +2477,13 @@ Actor.main(async () => {
         if (normEt) job.employmentType = normEt;
         if (extractedWorkMode && !job.workMode) job.workMode = extractedWorkMode;
 
-        // Scan description for remote signals (enrichRemoteStatus, absorbed into collector)
-        if (!job.workMode || job.workMode !== 'Remote') {
+        // Scan description for remote signals — but ONLY if ai_work_arrangement
+        // didn't already determine the work mode. For Fantastic/LinkedIn sources,
+        // ai_work_arrangement is authoritative and must not be overridden by
+        // keyword matching in the description (e.g., "remote work options" in a
+        // Hybrid job description was causing Hybrid jobs to be marked Remote).
+        const hasAiWorkArrangement = !!(job.raw?.ai_work_arrangement);
+        if (!hasAiWorkArrangement && (!job.workMode || job.workMode !== 'Remote')) {
           const desc = String(job.description || '').slice(0, 3000).toLowerCase();
           if (REMOTE_SIGNAL_PATTERNS.some(p => p.test(desc))) {
             job.workMode = 'Remote';
