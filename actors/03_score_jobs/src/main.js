@@ -1947,6 +1947,7 @@ Actor.main(async () => {
         locationSkipped += 1;
         return {
           ...job,
+          llmInput: jobForPrompt,
           filterReason: `location_skip_post_llm: ${job.workMode || 'unknown'} | ${job.location || 'unknown'} | is_us=${evaluation.is_us} | country=${evaluation.location_country}`,
           evaluation: {
             ...evaluation,
@@ -1983,6 +1984,7 @@ Actor.main(async () => {
 
     return {
       ...job,
+      llmInput: jobForPrompt,
       filterReason: filterDesc,
       evaluation: {
         ...evaluation,
