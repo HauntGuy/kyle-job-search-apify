@@ -1283,13 +1283,6 @@ Actor.main(async () => {
   const scoredDataset = await Actor.openDataset(scoredDatasetName);
   const acceptedDataset = await Actor.openDataset(acceptedDatasetName);
 
-  // Read run number from pipeline metadata (set by orchestrator)
-  let runNumber = null;
-  try {
-    const runMeta = await kv.getValue('run_meta.json');
-    if (runMeta?.runNumber) runNumber = runMeta.runNumber;
-  } catch { /* ignore — run number is optional metadata */ }
-
   const startedAt = nowIso();
 
   const model = String(scoringCfg.model || 'gpt-4o-mini');
