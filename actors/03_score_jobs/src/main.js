@@ -1292,6 +1292,8 @@ Actor.main(async () => {
   const debugJobIds = new Set(Array.isArray(scoringCfg.debugJobIds) ? scoringCfg.debugJobIds : []);
   if (debugJobIds.size) log.info(`LLM debug enabled for ${debugJobIds.size} job IDs: ${[...debugJobIds].join(', ')}`);
   const debugLlmResults = [];  // collected during scoring, written to KV at end
+  // Clear stale debug data from previous runs so we never confuse old results with new ones
+  await kv.setValue('debug_llm.json', { capturedAt: null, jobs: [], note: 'Cleared at start of scoring run' });
   const rawConcurrency = Number(scoringCfg.concurrency ?? 4) || 4;
   // Reasoning models (GPT-5+) hold connections open much longer (10-30s vs 1-2s).
   // Cap concurrency at 4 to reduce ECONNRESET / socket errors.
@@ -1799,8 +1801,10 @@ Actor.main(async () => {
     }
 
     // --- Cache check (only after all gates pass) ---
+    // Debug jobs bypass cache so we always capture their full LLM prompt+response.
+    const isDebugJob = jobIdList.some(id => debugJobIds.has(id));
     const cached = lookupCache(cacheMap, job);
-    if (cached?.evaluation) {
+    if (cached?.evaluation && !isDebugJob) {
       cacheHits++;
       return {
         ...job,
@@ -1809,6 +1813,9 @@ Actor.main(async () => {
         scoredAt: cached.scoredAt || nowIso(),
         cachedFrom: 'previous_run',
       };
+    }
+    if (cached?.evaluation && isDebugJob) {
+      log.info(`[DEBUG] Bypassing cache for debug job: ${job.title} (${jobIdList.join(', ')})`);
     }
 
     // --- LLM scoring (cache miss, all gates passed) ---
@@ -1868,7 +1875,6 @@ Actor.main(async () => {
     const evaluation = await callOpenAIJson({ apiKey, model, messages, stats: openAiStats });
 
     // Debug: capture full prompt+response for specific jobs
-    const isDebugJob = jobIdList.some(id => debugJobIds.has(id));
     if (isDebugJob) {
       debugLlmResults.push({
         jobIds: jobIdList,
