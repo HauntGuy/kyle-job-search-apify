@@ -3,19 +3,23 @@
 
 import { Actor, log } from 'apify';
 
+// KEEP IN SYNC with: actors/00_run_pipeline/src/main.js, actors/01_collect_jobs/src/main.js, actors/03_score_jobs/src/main.js, actors/04_notify_email/src/main.js, actors/99_diagnostics_dump/src/main.js
 function nowIso() {
   return new Date().toISOString();
 }
 
+// KEEP IN SYNC with: actors/01_collect_jobs/src/main.js, actors/03_score_jobs/src/main.js
 function safeRunId(runId) {
   if (!runId) return null;
   return String(runId).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80);
 }
 
+// KEEP IN SYNC with: actors/00_run_pipeline/src/main.js, actors/01_collect_jobs/src/main.js, actors/03_score_jobs/src/main.js
 function makeRunId() {
   return new Date().toISOString().replace(/[:.]/g, '-');
 }
 
+// KEEP IN SYNC with: actors/01_collect_jobs/src/main.js, actors/03_score_jobs/src/main.js
 function datasetName(prefix, kind, runId, runNumber) {
   const p = String(prefix || 'jobsearch-v3').replace(/[^a-zA-Z0-9._-]/g, '-');
   const r = safeRunId(runId) || makeRunId();
@@ -23,6 +27,7 @@ function datasetName(prefix, kind, runId, runNumber) {
   return `${p}--${kind}--${rn}${r}`;
 }
 
+// KEEP IN SYNC with: actors/01_collect_jobs/src/main.js, actors/03_score_jobs/src/main.js, actors/04_notify_email/src/main.js
 async function fetchText(url, headers = {}) {
   const u = url.includes('?') ? `${url}&cb=${Date.now()}` : `${url}?cb=${Date.now()}`;
   const res = await fetch(u, { method: 'GET', headers });
@@ -31,6 +36,7 @@ async function fetchText(url, headers = {}) {
   return text;
 }
 
+// KEEP IN SYNC with: actors/00_run_pipeline/src/main.js, actors/01_collect_jobs/src/main.js, actors/03_score_jobs/src/main.js, actors/04_notify_email/src/main.js
 async function fetchJson(url, headers = {}) {
   const text = await fetchText(url, { ...headers, 'Accept': 'application/json' });
   try {
@@ -40,6 +46,7 @@ async function fetchJson(url, headers = {}) {
   }
 }
 
+// KEEP IN SYNC with: actors/00_run_pipeline/src/main.js, actors/01_collect_jobs/src/main.js, actors/03_score_jobs/src/main.js, actors/04_notify_email/src/main.js
 async function loadConfig(input) {
   if (input?.config && typeof input.config === 'object') return input.config;
 
@@ -54,6 +61,7 @@ async function loadConfig(input) {
   return await fetchJson(configUrl);
 }
 
+// KEEP IN SYNC with: actors/01_collect_jobs/src/main.js
 function canonicalizeUrl(u) {
   if (!u) return '';
   try {
@@ -70,6 +78,7 @@ function canonicalizeUrl(u) {
   }
 }
 
+// KEEP IN SYNC with: actors/03_score_jobs/src/main.js
 // Normalize company name for fuzzy dedup across sources
 function normalizeCompany(name) {
   if (!name) return '';
@@ -80,6 +89,7 @@ function normalizeCompany(name) {
     .trim();
 }
 
+// KEEP IN SYNC with: actors/03_score_jobs/src/main.js
 // Normalize title for fuzzy dedup across sources
 function normalizeTitle(title) {
   if (!title) return '';
@@ -116,6 +126,7 @@ function makeKeys(job) {
   return keys;
 }
 
+// KEEP IN SYNC with: actors/01_collect_jobs/src/main.js
 function jobIdPrefix(sourceId) {
   const s = String(sourceId || '');
   if (s === 'fantastic' || s.startsWith('fantastic_')) return 'F';
@@ -123,7 +134,7 @@ function jobIdPrefix(sourceId) {
   if (s.startsWith('builtin_')) return 'B';
   if (s.startsWith('usajobs_')) return 'U';
   if (s === 'gracklehq') return 'G';
-  if (s.startsWith('gamejobs_co')) return 'GJ';
+  if (s.startsWith('gamejobs_co')) return 'J';
   if (s.startsWith('gjd_')) return 'D';
   return '?';
 }

@@ -20,6 +20,7 @@ https.globalAgent = new https.Agent({ keepAlive: false });
 // These are transient network issues; use console directly (not `log`)
 // because the Apify logger may not be initialized when these fire.
 const TRANSIENT_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ECONNABORTED', 'UND_ERR_SOCKET']);
+// KEEP IN SYNC with: actors/00_run_pipeline/src/main.js
 function isTransientError(err) {
   if (!err) return false;
   if (TRANSIENT_CODES.has(err.code)) return true;
@@ -45,19 +46,23 @@ process.on('unhandledRejection', (reason) => {
   process.exit(1);
 });
 
+// KEEP IN SYNC with: actors/00_run_pipeline/src/main.js, actors/01_collect_jobs/src/main.js, actors/02_merge_dedup/src/main.js, actors/04_notify_email/src/main.js, actors/99_diagnostics_dump/src/main.js
 function nowIso() {
   return new Date().toISOString();
 }
 
+// KEEP IN SYNC with: actors/01_collect_jobs/src/main.js, actors/02_merge_dedup/src/main.js
 function safeRunId(runId) {
   if (!runId) return null;
   return String(runId).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80);
 }
 
+// KEEP IN SYNC with: actors/00_run_pipeline/src/main.js, actors/01_collect_jobs/src/main.js, actors/02_merge_dedup/src/main.js
 function makeRunId() {
   return new Date().toISOString().replace(/[:.]/g, '-');
 }
 
+// KEEP IN SYNC with: actors/01_collect_jobs/src/main.js, actors/02_merge_dedup/src/main.js
 function datasetName(prefix, kind, runId, runNumber) {
   const p = String(prefix || 'jobsearch-v3').replace(/[^a-zA-Z0-9._-]/g, '-');
   const r = safeRunId(runId) || makeRunId();
@@ -69,6 +74,7 @@ async function sleep(ms) {
   await new Promise((r) => setTimeout(r, ms));
 }
 
+// KEEP IN SYNC with: actors/01_collect_jobs/src/main.js, actors/02_merge_dedup/src/main.js, actors/04_notify_email/src/main.js
 async function fetchText(url, headers = {}) {
   const u = url.includes('?') ? `${url}&cb=${Date.now()}` : `${url}?cb=${Date.now()}`;
   const res = await fetch(u, { method: 'GET', headers });
@@ -77,12 +83,14 @@ async function fetchText(url, headers = {}) {
   return text;
 }
 
+// KEEP IN SYNC with: actors/00_run_pipeline/src/main.js, actors/01_collect_jobs/src/main.js, actors/02_merge_dedup/src/main.js, actors/04_notify_email/src/main.js
 async function fetchJson(url, headers = {}) {
   const text = await fetchText(url, { ...headers, Accept: 'application/json' });
   try { return JSON.parse(text); }
   catch (e) { throw new Error(`Non-JSON response from ${url}: ${e?.message || e}\n${text.slice(0, 500)}`); }
 }
 
+// KEEP IN SYNC with: actors/00_run_pipeline/src/main.js, actors/01_collect_jobs/src/main.js, actors/02_merge_dedup/src/main.js, actors/04_notify_email/src/main.js
 async function loadConfig(input) {
   if (input?.config && typeof input.config === 'object') return input.config;
   const configUrl = input?.configUrl || process.env.JOBSEARCH_CONFIG_URL || process.env.CONFIG_URL;
@@ -137,6 +145,7 @@ function normalizeLocationOk(v) {
   return 'unknown';
 }
 
+// KEEP IN SYNC with: actors/01_collect_jobs/src/main.js
 async function listDatasetItems(datasetId, limit) {
   const client = Actor.apifyClient;
   const items = [];
@@ -289,6 +298,7 @@ function extractRubricVersion(rubricText) {
   return match ? match[1] : null;
 }
 
+// KEEP IN SYNC with: actors/02_merge_dedup/src/main.js
 // Normalize company name for cache key matching (same logic as 02_merge_dedup)
 function normalizeCompany(name) {
   if (!name) return '';
@@ -299,6 +309,7 @@ function normalizeCompany(name) {
     .trim();
 }
 
+// KEEP IN SYNC with: actors/02_merge_dedup/src/main.js
 // Normalize title for cache key matching (same logic as 02_merge_dedup)
 function normalizeTitle(title) {
   if (!title) return '';
@@ -582,6 +593,7 @@ async function fetchLinkedInDetail(jobId, apifyToken) {
   return items?.[0]?.data || null;
 }
 
+// KEEP IN SYNC with: actors/01_collect_jobs/src/main.js
 /**
  * Strip HTML tags from a string and produce clean plain text.
  */

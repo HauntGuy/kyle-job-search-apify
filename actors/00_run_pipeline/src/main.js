@@ -17,6 +17,7 @@ https.globalAgent = new https.Agent({ keepAlive: false });
 // These are transient network issues; use console directly (not `log`)
 // because the Apify logger may not be initialized when these fire.
 const TRANSIENT_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ECONNABORTED', 'UND_ERR_SOCKET']);
+// KEEP IN SYNC with: actors/03_score_jobs/src/main.js
 function isTransientError(err) {
   if (!err) return false;
   if (TRANSIENT_CODES.has(err.code)) return true;
@@ -42,10 +43,12 @@ process.on('unhandledRejection', (reason) => {
   process.exit(1);
 });
 
+// KEEP IN SYNC with: actors/01_collect_jobs/src/main.js, actors/02_merge_dedup/src/main.js, actors/03_score_jobs/src/main.js, actors/04_notify_email/src/main.js, actors/99_diagnostics_dump/src/main.js
 function nowIso() {
   return new Date().toISOString();
 }
 
+// KEEP IN SYNC with: actors/01_collect_jobs/src/main.js, actors/02_merge_dedup/src/main.js, actors/03_score_jobs/src/main.js
 function makeRunId() {
   // Example: 2026-03-04T05-00-00Z
   return new Date().toISOString()
@@ -54,6 +57,7 @@ function makeRunId() {
     .replace('Z', 'Z');
 }
 
+// KEEP IN SYNC with: actors/01_collect_jobs/src/main.js, actors/02_merge_dedup/src/main.js, actors/03_score_jobs/src/main.js, actors/04_notify_email/src/main.js
 async function fetchJson(url) {
   const u = url.includes('?') ? `${url}&cb=${Date.now()}` : `${url}?cb=${Date.now()}`;
   const res = await fetch(u, { method: 'GET', headers: { 'Accept': 'application/json' } });
@@ -68,6 +72,7 @@ async function fetchJson(url) {
   }
 }
 
+// KEEP IN SYNC with: actors/01_collect_jobs/src/main.js, actors/02_merge_dedup/src/main.js, actors/03_score_jobs/src/main.js, actors/04_notify_email/src/main.js
 async function loadConfig(input) {
   if (input?.config && typeof input.config === 'object') return input.config;
 

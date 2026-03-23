@@ -3,10 +3,12 @@
 
 import { Actor, log } from 'apify';
 
+// KEEP IN SYNC with: actors/00_run_pipeline/src/main.js, actors/01_collect_jobs/src/main.js, actors/02_merge_dedup/src/main.js, actors/03_score_jobs/src/main.js, actors/99_diagnostics_dump/src/main.js
 function nowIso() {
   return new Date().toISOString();
 }
 
+// KEEP IN SYNC with: actors/01_collect_jobs/src/main.js, actors/02_merge_dedup/src/main.js, actors/03_score_jobs/src/main.js
 async function fetchText(url, headers = {}) {
   const u = url.includes('?') ? `${url}&cb=${Date.now()}` : `${url}?cb=${Date.now()}`;
   const res = await fetch(u, { method: 'GET', headers });
@@ -15,6 +17,7 @@ async function fetchText(url, headers = {}) {
   return text;
 }
 
+// KEEP IN SYNC with: actors/00_run_pipeline/src/main.js, actors/01_collect_jobs/src/main.js, actors/02_merge_dedup/src/main.js, actors/03_score_jobs/src/main.js
 async function fetchJson(url, headers = {}) {
   const text = await fetchText(url, { ...headers, 'Accept': 'application/json' });
   try {
@@ -24,6 +27,7 @@ async function fetchJson(url, headers = {}) {
   }
 }
 
+// KEEP IN SYNC with: actors/00_run_pipeline/src/main.js, actors/01_collect_jobs/src/main.js, actors/02_merge_dedup/src/main.js, actors/03_score_jobs/src/main.js
 async function loadConfig(input) {
   if (input?.config && typeof input.config === 'object') return input.config;
 

@@ -16,9 +16,13 @@ const { City, State, Country } = _require('country-state-city');
 
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
+// KEEP IN SYNC with: actors/00_run_pipeline/src/main.js, actors/02_merge_dedup/src/main.js, actors/03_score_jobs/src/main.js, actors/04_notify_email/src/main.js, actors/99_diagnostics_dump/src/main.js
 function nowIso() { return new Date().toISOString(); }
+// KEEP IN SYNC with: actors/02_merge_dedup/src/main.js, actors/03_score_jobs/src/main.js
 function safeRunId(runId) { if (!runId) return null; return String(runId).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80); }
+// KEEP IN SYNC with: actors/00_run_pipeline/src/main.js, actors/02_merge_dedup/src/main.js, actors/03_score_jobs/src/main.js
 function makeRunId() { return new Date().toISOString().replace(/[:.]/g, '-'); }
+// KEEP IN SYNC with: actors/02_merge_dedup/src/main.js, actors/03_score_jobs/src/main.js
 function datasetName(prefix, kind, runId, runNumber) {
   const p = String(prefix || 'jobsearch-v3').replace(/[^a-zA-Z0-9._-]/g, '-');
   const r = safeRunId(runId) || makeRunId();
@@ -26,6 +30,7 @@ function datasetName(prefix, kind, runId, runNumber) {
   return `${p}--${kind}--${rn}${r}`;
 }
 
+// KEEP IN SYNC with: actors/02_merge_dedup/src/main.js, actors/03_score_jobs/src/main.js, actors/04_notify_email/src/main.js
 async function fetchText(url, headers = {}) {
   const u = url.includes('?') ? `${url}&cb=${Date.now()}` : `${url}?cb=${Date.now()}`;
   const res = await fetch(u, { method: 'GET', headers });
@@ -34,6 +39,7 @@ async function fetchText(url, headers = {}) {
   return text;
 }
 
+// KEEP IN SYNC with: actors/00_run_pipeline/src/main.js, actors/02_merge_dedup/src/main.js, actors/03_score_jobs/src/main.js, actors/04_notify_email/src/main.js
 async function fetchJson(url, headers = {}) {
   const text = await fetchText(url, { ...headers, Accept: 'application/json' });
   try { return JSON.parse(text); }
@@ -56,6 +62,7 @@ async function fetchHtmlRetryable(url, headers = {}) {
   return text;
 }
 
+// KEEP IN SYNC with: actors/00_run_pipeline/src/main.js, actors/02_merge_dedup/src/main.js, actors/03_score_jobs/src/main.js, actors/04_notify_email/src/main.js
 async function loadConfig(input) {
   if (input?.config && typeof input.config === 'object') return input.config;
   const configUrl = input?.configUrl || process.env.JOBSEARCH_CONFIG_URL || process.env.CONFIG_URL;
@@ -105,6 +112,7 @@ function toIsoOrEmpty(v) {
   return new Date(ms).toISOString();
 }
 
+// KEEP IN SYNC with: actors/02_merge_dedup/src/main.js
 function canonicalizeUrl(u) {
   if (!u) return '';
   try {
@@ -979,6 +987,7 @@ function normalizeFantasticFeed(sourceId, raw) {
 
 
 
+// KEEP IN SYNC with: actors/03_score_jobs/src/main.js
 async function listDatasetItems(datasetId, limit) {
   const client = Actor.apifyClient;
   const items = [];
@@ -1647,6 +1656,7 @@ function parseGameJobsDetail(html, url) {
   return result;
 }
 
+// KEEP IN SYNC with: actors/03_score_jobs/src/main.js
 function stripHtmlTags(html) {
   if (!html) return '';
   return html
@@ -2328,6 +2338,7 @@ function collectedFriendlySource(sourceId) {
   return map[s] || s;
 }
 
+// KEEP IN SYNC with: actors/02_merge_dedup/src/main.js
 function jobIdPrefix(sourceId) {
   const s = String(sourceId || '');
   if (s === 'fantastic' || s.startsWith('fantastic_')) return 'F';

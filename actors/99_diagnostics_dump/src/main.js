@@ -19,6 +19,7 @@
 import { Actor, log } from 'apify';
 import fetch from 'node-fetch';
 
+// KEEP IN SYNC with: actors/00_run_pipeline/src/main.js, actors/01_collect_jobs/src/main.js, actors/02_merge_dedup/src/main.js, actors/03_score_jobs/src/main.js, actors/04_notify_email/src/main.js
 function nowIso() { return new Date().toISOString(); }
 
 function escHtml(s) {
