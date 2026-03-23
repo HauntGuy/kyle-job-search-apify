@@ -1315,6 +1315,14 @@ Actor.main(async () => {
   }
   log.info(`Loaded ${mergedJobs.length} merged jobs.`);
 
+  // --- Check for clear_score_cache flag ---
+  const clearCacheFlag = await kv.getValue('clear_score_cache.json');
+  if (clearCacheFlag?.clear) {
+    log.info('clear_score_cache flag detected — clearing score_cache.json and resetting flag.');
+    await kv.setValue('score_cache.json', null);
+    await kv.setValue('clear_score_cache.json', { clear: false, clearedAt: new Date().toISOString() });
+  }
+
   // --- Score cache: reuse evaluations from previous run if rubric + format unchanged ---
   let cacheMap = null;  // Map<key, scoredJob>
   let cacheHits = 0;
