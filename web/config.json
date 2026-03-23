@@ -140,7 +140,7 @@
       }
     },
     {
-      "id": "linkedin",
+      "id": "linkedin_unity",
       "type": "apify_actor",
       "enabled": true,
       "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
@@ -148,24 +148,58 @@
       "memoryMbytes": 2048,
       "input": {
         "limit": 5000,
-        "titleSearch": [
-          "developer",
-          "engineer",
-          "programmer",
-          "designer"
-        ],
-        "descriptionSearch": [
-          "unity",
-          "game",
-          "gameplay",
-          "level designer"
-        ],
+        "titleSearch": ["developer", "engineer", "programmer"],
+        "descriptionSearch": ["unity"],
         "removeAgency": true,
-        "seniorityFilter": [
-          "Entry level",
-          "Associate",
-          "Mid-Senior level"
-        ],
+        "seniorityFilter": ["Entry level", "Associate", "Mid-Senior level"],
+        "descriptionType": "text"
+      }
+    },
+    {
+      "id": "linkedin_gameplay",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
+      "adapter": "linkedin_generic",
+      "memoryMbytes": 2048,
+      "input": {
+        "limit": 5000,
+        "titleSearch": ["developer", "engineer", "programmer"],
+        "descriptionSearch": ["gameplay"],
+        "removeAgency": true,
+        "seniorityFilter": ["Entry level", "Associate", "Mid-Senior level"],
+        "descriptionType": "text"
+      }
+    },
+    {
+      "id": "linkedin_game_dev",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
+      "adapter": "linkedin_generic",
+      "memoryMbytes": 2048,
+      "input": {
+        "limit": 5000,
+        "titleSearch": ["developer", "engineer", "programmer", "designer"],
+        "descriptionSearch": ["game developer", "game engineer", "game programmer", "game designer", "game development"],
+        "removeAgency": true,
+        "seniorityFilter": ["Entry level", "Associate", "Mid-Senior level"],
+        "descriptionType": "text"
+      }
+    },
+    {
+      "id": "linkedin_level_designer",
+      "type": "apify_actor",
+      "enabled": true,
+      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
+      "adapter": "linkedin_generic",
+      "memoryMbytes": 2048,
+      "input": {
+        "limit": 5000,
+        "titleSearch": ["level designer"],
+        "descriptionSearch": ["game"],
+        "removeAgency": true,
+        "seniorityFilter": ["Entry level", "Associate", "Mid-Senior level"],
         "descriptionType": "text"
       }
     },
@@ -407,7 +441,7 @@
     "concurrency": 8,
     "maxDescriptionChars": 12000,
     "rubricUrl": "http://forgaard.com/jobsearch/rubric.txt",
-    "debugJobIds": []
+    "debugJobIds": ["?:2045408868", "F:2025789301", "F:1972001947", "F:2045594737", "L:2064792480"]
   },
   "notify": {
     "enabled": true,
