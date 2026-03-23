@@ -9,7 +9,7 @@
   },
   "sources": [
     {
-      "id": "fantastic_unity",
+      "id": "fantastic",
       "type": "apify_actor",
       "enabled": true,
       "actorId": "fantastic-jobs/career-site-job-listing-feed",
@@ -23,37 +23,9 @@
           "programmer"
         ],
         "descriptionSearch": [
-          "unity"
-        ],
-        "aiWorkArrangementFilter": [
-          "Remote OK",
-          "Remote Solely",
-          "Hybrid",
-          "On-site"
-        ],
-        "descriptionType": "text",
-        "includeAi": true,
-        "includeLinkedIn": true,
-        "includeJobAggregator": true,
-        "makeRecordsUnique": true
-      }
-    },
-    {
-      "id": "fantastic_gameplay",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/career-site-job-listing-feed",
-      "adapter": "fantastic_feed",
-      "memoryMbytes": 2048,
-      "input": {
-        "limit": 5000,
-        "titleSearch": [
-          "developer",
-          "engineer",
-          "programmer"
-        ],
-        "descriptionSearch": [
-          "gameplay"
+          "unity",
+          "gameplay",
+          "level designer"
         ],
         "aiWorkArrangementFilter": [
           "Remote OK",
@@ -169,59 +141,7 @@
       }
     },
     {
-      "id": "linkedin_unity",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
-      "adapter": "linkedin_generic",
-      "memoryMbytes": 2048,
-      "input": {
-        "limit": 5000,
-        "titleSearch": [
-          "developer",
-          "engineer",
-          "programmer"
-        ],
-        "descriptionSearch": [
-          "unity"
-        ],
-        "removeAgency": true,
-        "seniorityFilter": [
-          "Entry level",
-          "Associate",
-          "Mid-Senior level"
-        ],
-        "descriptionType": "text"
-      }
-    },
-    {
-      "id": "linkedin_gameplay",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
-      "adapter": "linkedin_generic",
-      "memoryMbytes": 2048,
-      "input": {
-        "limit": 5000,
-        "titleSearch": [
-          "developer",
-          "engineer",
-          "programmer"
-        ],
-        "descriptionSearch": [
-          "gameplay"
-        ],
-        "removeAgency": true,
-        "seniorityFilter": [
-          "Entry level",
-          "Associate",
-          "Mid-Senior level"
-        ],
-        "descriptionType": "text"
-      }
-    },
-    {
-      "id": "linkedin_game_dev",
+      "id": "linkedin",
       "type": "apify_actor",
       "enabled": true,
       "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
@@ -236,35 +156,10 @@
           "designer"
         ],
         "descriptionSearch": [
-          "game developer",
-          "game engineer",
-          "game programmer",
-          "game designer",
-          "game development"
-        ],
-        "removeAgency": true,
-        "seniorityFilter": [
-          "Entry level",
-          "Associate",
-          "Mid-Senior level"
-        ],
-        "descriptionType": "text"
-      }
-    },
-    {
-      "id": "linkedin_level_designer",
-      "type": "apify_actor",
-      "enabled": true,
-      "actorId": "fantastic-jobs/advanced-linkedin-job-search-api",
-      "adapter": "linkedin_generic",
-      "memoryMbytes": 2048,
-      "input": {
-        "limit": 5000,
-        "titleSearch": [
+          "unity",
+          "game",
+          "gameplay",
           "level designer"
-        ],
-        "descriptionSearch": [
-          "game"
         ],
         "removeAgency": true,
         "seniorityFilter": [

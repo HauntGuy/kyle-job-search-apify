@@ -19,10 +19,11 @@ const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 function nowIso() { return new Date().toISOString(); }
 function safeRunId(runId) { if (!runId) return null; return String(runId).replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80); }
 function makeRunId() { return new Date().toISOString().replace(/[:.]/g, '-'); }
-function datasetName(prefix, kind, runId) {
+function datasetName(prefix, kind, runId, runNumber) {
   const p = String(prefix || 'jobsearch-v3').replace(/[^a-zA-Z0-9._-]/g, '-');
   const r = safeRunId(runId) || makeRunId();
-  return `${p}--${kind}--${r}`;
+  const rn = runNumber ? `R${runNumber}--` : '';
+  return `${p}--${kind}--${rn}${r}`;
 }
 
 async function fetchText(url, headers = {}) {
@@ -2413,12 +2414,13 @@ Actor.main(async () => {
   const config = await loadConfig(input);
 
   const runId = input.runId || makeRunId();
+  const runNumber = input.runNumber || null;
   const kvStoreName = input.kvStoreName || config.kvStoreName || 'job-pipeline-v3';
   const datasetPrefix = input.datasetPrefix || config.datasetPrefix || 'jobsearch-v3';
 
   const kv = await Actor.openKeyValueStore(kvStoreName);
 
-  const collectedDatasetName = datasetName(datasetPrefix, 'collected', runId);
+  const collectedDatasetName = datasetName(datasetPrefix, 'collected', runId, runNumber);
   const collectedDataset = await Actor.openDataset(collectedDatasetName);
 
   const startedAt = nowIso();

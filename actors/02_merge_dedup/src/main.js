@@ -16,10 +16,11 @@ function makeRunId() {
   return new Date().toISOString().replace(/[:.]/g, '-');
 }
 
-function datasetName(prefix, kind, runId) {
+function datasetName(prefix, kind, runId, runNumber) {
   const p = String(prefix || 'jobsearch-v3').replace(/[^a-zA-Z0-9._-]/g, '-');
   const r = safeRunId(runId) || makeRunId();
-  return `${p}--${kind}--${r}`;
+  const rn = runNumber ? `R${runNumber}--` : '';
+  return `${p}--${kind}--${rn}${r}`;
 }
 
 async function fetchText(url, headers = {}) {
@@ -217,6 +218,7 @@ Actor.main(async () => {
   const config = await loadConfig(input);
 
   const runId = input.runId || makeRunId();
+  const runNumber = input.runNumber || null;
   const kvStoreName = input.kvStoreName || config.kvStoreName || 'job-pipeline-v3';
   const datasetPrefix = input.datasetPrefix || config.datasetPrefix || 'jobsearch-v3';
 
@@ -228,7 +230,7 @@ Actor.main(async () => {
 
   const collectedDataset = await Actor.openDataset(collectedInfo.name);
 
-  const mergedDatasetName = datasetName(datasetPrefix, 'merged', runId);
+  const mergedDatasetName = datasetName(datasetPrefix, 'merged', runId, runNumber);
   const mergedDataset = await Actor.openDataset(mergedDatasetName);
 
   const preferLinkedInApply = config?.merge?.preferLinkedInApply !== false;

@@ -58,10 +58,11 @@ function makeRunId() {
   return new Date().toISOString().replace(/[:.]/g, '-');
 }
 
-function datasetName(prefix, kind, runId) {
+function datasetName(prefix, kind, runId, runNumber) {
   const p = String(prefix || 'jobsearch-v3').replace(/[^a-zA-Z0-9._-]/g, '-');
   const r = safeRunId(runId) || makeRunId();
-  return `${p}--${kind}--${r}`;
+  const rn = runNumber ? `R${runNumber}--` : '';
+  return `${p}--${kind}--${rn}${r}`;
 }
 
 async function sleep(ms) {
@@ -1269,12 +1270,13 @@ Actor.main(async () => {
   if (!apiKey) throw new Error('Missing OPENAI_API_KEY env var on 03_score_jobs actor.');
 
   const runId = input.runId || makeRunId();
+  const runNumber = input.runNumber || null;
   const kvStoreName = input.kvStoreName || config.kvStoreName || 'job-pipeline-v3';
   const datasetPrefix = input.datasetPrefix || config.datasetPrefix || 'jobsearch-v3';
 
-  const mergedDatasetName = input.mergedDatasetName || datasetName(datasetPrefix, 'merged', runId);
-  const scoredDatasetName = input.scoredDatasetName || datasetName(datasetPrefix, 'scored', runId);
-  const acceptedDatasetName = input.acceptedDatasetName || datasetName(datasetPrefix, 'accepted', runId);
+  const mergedDatasetName = input.mergedDatasetName || datasetName(datasetPrefix, 'merged', runId, runNumber);
+  const scoredDatasetName = input.scoredDatasetName || datasetName(datasetPrefix, 'scored', runId, runNumber);
+  const acceptedDatasetName = input.acceptedDatasetName || datasetName(datasetPrefix, 'accepted', runId, runNumber);
 
   const kv = await Actor.openKeyValueStore(kvStoreName);
   const mergedDataset = await Actor.openDataset(mergedDatasetName);

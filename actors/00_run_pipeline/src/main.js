@@ -220,7 +220,7 @@ Actor.main(async () => {
   try {
     // 1) Collect
     const collectActor = resolveActorId({ config, actorUser, step: 'collect' });
-    stepRuns.collect = await safeCallActor(collectActor, { config, kvStoreName, datasetPrefix, runId }, 'collect',
+    stepRuns.collect = await safeCallActor(collectActor, { config, kvStoreName, datasetPrefix, runId, runNumber }, 'collect',
       { memoryMbytes: config?.actorMemory?.collect || 2048, timeoutSecs: 14400 });
 
     // Safety check: if any source hit its limit, abort before spending money
@@ -244,13 +244,13 @@ Actor.main(async () => {
 
     // 2) Merge + dedup
     const mergeActor = resolveActorId({ config, actorUser, step: 'merge' });
-    stepRuns.merge = await safeCallActor(mergeActor, { config, kvStoreName, datasetPrefix, runId }, 'merge',
+    stepRuns.merge = await safeCallActor(mergeActor, { config, kvStoreName, datasetPrefix, runId, runNumber }, 'merge',
       { memoryMbytes: config?.actorMemory?.merge || 2048 });
 
     // 3) Score
     if (config?.scoring?.enabled !== false) {
       const scoreActor = resolveActorId({ config, actorUser, step: 'score' });
-      stepRuns.score = await safeCallActor(scoreActor, { config, kvStoreName, datasetPrefix, runId }, 'score',
+      stepRuns.score = await safeCallActor(scoreActor, { config, kvStoreName, datasetPrefix, runId, runNumber }, 'score',
         { memoryMbytes: config?.actorMemory?.score || 1024, timeoutSecs: config?.actorMemory?.scoreTimeoutSecs || 14400 });
     } else {
       log.warning('Scoring disabled by config.scoring.enabled=false');
