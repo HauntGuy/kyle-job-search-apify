@@ -400,17 +400,119 @@ def replay_from_file(prompt_file, openai_key):
     print(json.dumps(evaluation, indent=2, ensure_ascii=False))
 
 
+def replay_from_dataset(search_term, apify_token, openai_key):
+    """Replay an LLM call using the llmInput saved in the scored dataset.
+
+    search_term can be a job ID (F:12345) or a company name to search for.
+    Finds the job in the most recent scored dataset, uses its llmInput
+    to build the exact same messages, and calls the LLM.
+    """
+    base = 'https://api.apify.com/v2'
+
+    # Find the most recent scored dataset
+    data = fetch_json(f'{base}/datasets?token={apify_token}&unnamed=false&limit=10&desc=true')
+    scored_ds = None
+    for item in data.get('data', {}).get('items', []):
+        name = item.get('name') or ''
+        if 'scored' in name:
+            scored_ds = item
+            break
+
+    if not scored_ds:
+        print('No scored dataset found')
+        sys.exit(1)
+
+    print(f'Searching in: {scored_ds["name"]}')
+
+    # Load items and find the job
+    target = None
+    search_lower = search_term.lower()
+    offset = 0
+    while True:
+        url = f'{base}/datasets/{scored_ds["id"]}/items?token={apify_token}&limit=250&offset={offset}'
+        items = fetch_json(url)
+        if not items:
+            break
+        for item in items:
+            # Match by job ID
+            job_ids = item.get('sourceJobIds') or []
+            if search_term in job_ids:
+                target = item
+                break
+            # Match by company name (case-insensitive substring)
+            company = (item.get('company') or '').lower()
+            title = (item.get('title') or '').lower()
+            if search_lower in company or search_lower in title:
+                target = item
+                break
+        if target:
+            break
+        offset += len(items)
+        if len(items) < 250:
+            break
+
+    if not target:
+        print(f'Job matching "{search_term}" not found in scored dataset')
+        sys.exit(1)
+
+    print(f'Found: "{target.get("title")}" at {target.get("company")}')
+    print(f'Job IDs: {target.get("sourceJobIds", [])}')
+    print(f'filterReason: {target.get("filterReason", "")}')
+
+    llm_input = target.get('llmInput')
+    if not llm_input:
+        print('ERROR: No llmInput saved for this job. It may have been a cache hit or pre-filtered.')
+        print('Use --replay with a debug ID, or add this job to debugJobIds and re-run.')
+        sys.exit(1)
+
+    original = target.get('evaluation', {})
+    print(f'Original result: accept={original.get("accept")}, score={original.get("score")}')
+    print(f'Original red_flags: {original.get("red_flags", [])}')
+
+    # Build messages from llmInput (same structure as scorer)
+    rubric_text = fetch_text('http://forgaard.com/jobsearch/rubric.txt')
+    config = json.loads(fetch_text('http://forgaard.com/jobsearch/config.json'))
+    model = config.get('scoring', {}).get('model', 'gpt-4.1-mini')
+
+    messages = build_prompt(rubric_text, llm_input)
+
+    print(f'\nReplaying with {model} using llmInput from scored dataset...')
+    print(f'  System prompt: {len(messages[0]["content"])} chars')
+    print(f'  User content: {len(messages[1]["content"])} chars')
+
+    evaluation, usage = call_openai(openai_key, model, messages, temperature=0)
+
+    print(f'\n{"="*60}')
+    print(f'REPLAY RESULT (from llmInput)')
+    print(f'{"="*60}')
+    print(f'  Accept: {evaluation.get("accept")}')
+    print(f'  Score:  {evaluation.get("score")}')
+    print(f'  Reason: {evaluation.get("reason_short")}')
+    print(f'  Red flags: {evaluation.get("red_flags")}')
+
+    if evaluation.get('accept') == original.get('accept') and evaluation.get('score') == original.get('score'):
+        print(f'\n  MATCH: Same result as production')
+    else:
+        print(f'\n  DIFFERENT from production (accept={original.get("accept")}, score={original.get("score")})')
+
+    print(f'\n  Tokens: input={usage.get("input_tokens", "?")}, output={usage.get("output_tokens", "?")}')
+    print(f'\nFull JSON:')
+    print(json.dumps(evaluation, indent=2, ensure_ascii=False))
+
+
 def main():
     if len(sys.argv) < 2:
         print('Usage:')
         print('  python tools/test_score.py <JOB_ID>              # Rebuild prompt from dataset, call LLM')
         print('  python tools/test_score.py --replay <JOB_ID>     # Replay exact prompt from debug_llm.json')
         print('  python tools/test_score.py --replay-file <FILE>  # Replay from a saved messages JSON file')
+        print('  python tools/test_score.py --from-dataset <TERM> # Replay using llmInput from scored dataset')
         print('')
         print('Examples:')
         print('  python tools/test_score.py B:8518737')
         print('  python tools/test_score.py --replay F:1972001947')
         print('  python tools/test_score.py --replay-file prompt.json')
+        print('  python tools/test_score.py --from-dataset trimble')
         sys.exit(1)
 
     apify_token = os.environ.get('APIFY_TOKEN', '').strip()
@@ -437,6 +539,17 @@ def main():
             print('Error: --replay-file requires a FILE path')
             sys.exit(1)
         replay_from_file(sys.argv[2], openai_key)
+        return
+
+    # --from-dataset mode: use llmInput from scored dataset
+    if sys.argv[1] == '--from-dataset':
+        if len(sys.argv) < 3:
+            print('Error: --from-dataset requires a search term (job ID or company name)')
+            sys.exit(1)
+        if not apify_token:
+            print('Error: APIFY_TOKEN not set')
+            sys.exit(1)
+        replay_from_dataset(sys.argv[2], apify_token, openai_key)
         return
 
     # Default mode: rebuild prompt from dataset
