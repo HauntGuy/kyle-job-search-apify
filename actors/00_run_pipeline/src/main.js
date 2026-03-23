@@ -251,7 +251,7 @@ Actor.main(async () => {
     if (config?.scoring?.enabled !== false) {
       const scoreActor = resolveActorId({ config, actorUser, step: 'score' });
       stepRuns.score = await safeCallActor(scoreActor, { config, kvStoreName, datasetPrefix, runId, runNumber }, 'score',
-        { memoryMbytes: config?.actorMemory?.score || 1024, timeoutSecs: config?.actorMemory?.scoreTimeoutSecs || 14400 });
+        { memoryMbytes: config?.actorMemory?.score || 2048, timeoutSecs: config?.actorMemory?.scoreTimeoutSecs || 14400 });
     } else {
       log.warning('Scoring disabled by config.scoring.enabled=false');
     }
