@@ -281,7 +281,7 @@ function truncate(s, maxChars) {
 
 // --------------- Score cache helpers ---------------
 
-const SCORING_FORMAT_VERSION = 'v11'; // v11: fix applicantLocationRequirements for Remote jobs; blocklist; Built In JSON-LD enrichment
+const SCORING_FORMAT_VERSION = 'v12'; // v12: ai_work_arrangement fix (workMode changes for many jobs); URL health check; non-USD salary suppression
 
 function extractRubricVersion(rubricText) {
   const match = String(rubricText || '').match(/^(?:#\s+)?Rubric:.*?\((v\d+)\)/i);
@@ -2272,8 +2272,15 @@ Actor.main(async () => {
       job.evaluation.salary_extracted = display;
     }
     if (note) {
-      salaryNotes.push(note);
-      log.info(`Salary note: ${note}`);
+      // Suppress non-USD salary notes for foreign remote jobs — a foreign
+      // currency is expected and not noteworthy for Remote jobs abroad.
+      const isForeignRemote = job.workMode === 'Remote' && job.location &&
+        !['USA', 'MA', 'NY', 'NJ', 'CT', 'NH', 'VT', 'ME', 'RI'].includes(job.location) &&
+        note.startsWith('Non-USD');
+      if (!isForeignRemote) {
+        salaryNotes.push(note);
+        log.info(`Salary note: ${note}`);
+      }
     }
   }
   if (salaryNotes.length > 0) {
