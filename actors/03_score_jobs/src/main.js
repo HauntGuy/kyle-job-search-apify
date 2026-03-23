@@ -2280,6 +2280,49 @@ Actor.main(async () => {
     log.info(`Salary standardization: ${salaryNotes.length} note(s) generated.`);
   }
 
+  // --- URL health check for accepted jobs ---
+  // Remove jobs whose URL returns 404 (listing removed by employer).
+  // Skip LinkedIn URLs (they have their own closed-job check above).
+  const urlCheckResults = { checked: 0, dead: 0 };
+  const deadUrls = [];
+  const nonLinkedinAccepted = acceptedJobs.filter(j =>
+    j?.evaluation?.accepted && !/linkedin\.com/i.test(j.url || '') && !/linkedin\.com/i.test(j.applyUrl || '')
+  );
+  if (nonLinkedinAccepted.length > 0) {
+    log.info(`URL health check: ${nonLinkedinAccepted.length} non-LinkedIn accepted jobs...`);
+    for (const job of nonLinkedinAccepted) {
+      const url = job.applyUrl || job.url;
+      if (!url) continue;
+      urlCheckResults.checked++;
+      try {
+        const res = await fetch(url, {
+          method: 'HEAD',
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; job-pipeline/1.0)' },
+          signal: AbortSignal.timeout(8000),
+          redirect: 'follow',
+        });
+        if (res.status === 404 || res.status === 410) {
+          urlCheckResults.dead++;
+          deadUrls.push(`${job.company} — ${job.title}: ${url} (HTTP ${res.status})`);
+          job.evaluation.accepted = false;
+          job.filterReason = `url_dead: HTTP ${res.status} — listing removed`;
+          log.info(`URL dead (${res.status}): "${job.title}" at ${job.company}`);
+        }
+      } catch (err) {
+        // Network errors, timeouts — don't penalize, assume URL is alive
+      }
+      await new Promise(r => setTimeout(r, 300));
+    }
+    // Remove dead jobs from acceptedJobs array
+    const beforeCount = acceptedJobs.length;
+    for (let i = acceptedJobs.length - 1; i >= 0; i--) {
+      if (acceptedJobs[i].filterReason?.startsWith('url_dead:')) {
+        acceptedJobs.splice(i, 1);
+      }
+    }
+    log.info(`URL health check done: ${urlCheckResults.checked} checked, ${urlCheckResults.dead} dead (removed from accepted).`);
+  }
+
   // Save score_cache.json BEFORE building XLSX — if XLSX generation OOMs,
   // we don't lose the LLM scoring results and LinkedIn caches.
   await kv.setValue('score_cache.json', {
