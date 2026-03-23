@@ -326,22 +326,124 @@ def call_openai(api_key, model, messages, temperature=0):
     return json.loads(text), usage
 
 
-def main():
-    if len(sys.argv) < 2:
-        print('Usage: python tools/test_score.py <JOB_ID>')
-        print('  e.g. python tools/test_score.py B:8518737')
+def replay_from_debug(job_id, apify_token, openai_key):
+    """Replay the exact LLM call from debug_llm.json (for debug ID jobs)."""
+    kv_id = 'KXRf1EAkVmKdWhc1T'
+    url = f'https://api.apify.com/v2/key-value-stores/{kv_id}/records/debug_llm.json?token={apify_token}'
+    debug = fetch_json(url)
+
+    # Find the job in debug results
+    target = None
+    for job in debug.get('jobs', []):
+        if job_id in (job.get('jobIds') or []):
+            target = job
+            break
+
+    if not target:
+        print(f'Job {job_id} not found in debug_llm.json')
+        print(f'Available debug jobs: {[j.get("jobIds") for j in debug.get("jobs", [])]}')
         sys.exit(1)
 
-    job_id = sys.argv[1]
+    print(f'Found in debug_llm.json: "{target.get("title")}" at {target.get("company")}')
+    print(f'Job IDs: {target.get("jobIds")}')
+
+    messages = target.get('prompt', [])
+    original = target.get('response', {})
+    print(f'Original result: accept={original.get("accept")}, score={original.get("score")}')
+    print(f'Original red_flags: {original.get("red_flags", [])}')
+
+    # Fetch config to get model
+    config = json.loads(fetch_text('http://forgaard.com/jobsearch/config.json'))
+    model = config.get('scoring', {}).get('model', 'gpt-4.1-mini')
+    print(f'\nReplaying with {model} using exact same prompt...')
+
+    evaluation, usage = call_openai(openai_key, model, messages, temperature=0)
+
+    print(f'\n{"="*60}')
+    print(f'REPLAY RESULT')
+    print(f'{"="*60}')
+    print(f'  Accept: {evaluation.get("accept")}')
+    print(f'  Score:  {evaluation.get("score")}')
+    print(f'  Reason: {evaluation.get("reason_short")}')
+    print(f'  Red flags: {evaluation.get("red_flags")}')
+
+    if evaluation.get('accept') == original.get('accept') and evaluation.get('score') == original.get('score'):
+        print(f'\n  MATCH: Same result as production')
+    else:
+        print(f'\n  DIFFERENT from production (accept={original.get("accept")}, score={original.get("score")})')
+
+    print(f'\n  Tokens: input={usage.get("input_tokens", "?")}, output={usage.get("output_tokens", "?")}')
+    print(f'\nFull JSON:')
+    print(json.dumps(evaluation, indent=2, ensure_ascii=False))
+
+
+def replay_from_file(prompt_file, openai_key):
+    """Replay an LLM call from a saved prompt JSON file."""
+    with open(prompt_file, 'r', encoding='utf-8') as f:
+        messages = json.load(f)
+
+    config = json.loads(fetch_text('http://forgaard.com/jobsearch/config.json'))
+    model = config.get('scoring', {}).get('model', 'gpt-4.1-mini')
+    print(f'Replaying from {prompt_file} with {model}...')
+
+    evaluation, usage = call_openai(openai_key, model, messages, temperature=0)
+
+    print(f'\n{"="*60}')
+    print(f'REPLAY RESULT')
+    print(f'{"="*60}')
+    print(f'  Accept: {evaluation.get("accept")}')
+    print(f'  Score:  {evaluation.get("score")}')
+    print(f'  Reason: {evaluation.get("reason_short")}')
+    print(f'  Red flags: {evaluation.get("red_flags")}')
+    print(f'\n  Tokens: input={usage.get("input_tokens", "?")}, output={usage.get("output_tokens", "?")}')
+    print(f'\nFull JSON:')
+    print(json.dumps(evaluation, indent=2, ensure_ascii=False))
+
+
+def main():
+    if len(sys.argv) < 2:
+        print('Usage:')
+        print('  python tools/test_score.py <JOB_ID>              # Rebuild prompt from dataset, call LLM')
+        print('  python tools/test_score.py --replay <JOB_ID>     # Replay exact prompt from debug_llm.json')
+        print('  python tools/test_score.py --replay-file <FILE>  # Replay from a saved messages JSON file')
+        print('')
+        print('Examples:')
+        print('  python tools/test_score.py B:8518737')
+        print('  python tools/test_score.py --replay F:1972001947')
+        print('  python tools/test_score.py --replay-file prompt.json')
+        sys.exit(1)
 
     apify_token = os.environ.get('APIFY_TOKEN', '').strip()
     openai_key = os.environ.get('OPENAI_API_KEY', '').strip()
 
-    if not apify_token:
-        print('Error: APIFY_TOKEN not set')
-        sys.exit(1)
     if not openai_key:
         print('Error: OPENAI_API_KEY not set')
+        sys.exit(1)
+
+    # --replay mode: use exact prompt from debug_llm.json
+    if sys.argv[1] == '--replay':
+        if len(sys.argv) < 3:
+            print('Error: --replay requires a JOB_ID')
+            sys.exit(1)
+        if not apify_token:
+            print('Error: APIFY_TOKEN not set')
+            sys.exit(1)
+        replay_from_debug(sys.argv[2], apify_token, openai_key)
+        return
+
+    # --replay-file mode: use prompt from a saved JSON file
+    if sys.argv[1] == '--replay-file':
+        if len(sys.argv) < 3:
+            print('Error: --replay-file requires a FILE path')
+            sys.exit(1)
+        replay_from_file(sys.argv[2], openai_key)
+        return
+
+    # Default mode: rebuild prompt from dataset
+    job_id = sys.argv[1]
+
+    if not apify_token:
+        print('Error: APIFY_TOKEN not set')
         sys.exit(1)
 
     # 1. Fetch rubric from forgaard.com (same source as scorer)
