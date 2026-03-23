@@ -1,1 +1,8 @@
 .claude/worktrees/
+actors/01_collect_jobs/node_modules/
+actors/01_collect_jobs/analyze_*.mjs
+actors/01_collect_jobs/test_*.js
+actors/01_collect_jobs/test_*.mjs
+actors/01_collect_jobs/package-lock.json
+test_location.mjs
+.claude/settings.local.json
